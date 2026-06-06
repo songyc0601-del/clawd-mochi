@@ -1,0 +1,31 @@
+<style>
+  .stage{max-width:400px;margin:22px auto;background:#f3f5f1;border:1px solid #d8ddd7;border-radius:18px;padding:14px;color:#252925;font-family:"Microsoft YaHei",sans-serif;box-shadow:0 20px 50px rgba(30,40,32,.13)}
+  .top{display:flex;align-items:center;justify-content:space-between;padding:4px 2px 13px}.brand{font-size:17px;font-weight:900}.online{font-size:10px;color:#24744a}.dot{display:inline-block;width:7px;height:7px;background:#28a864;border-radius:50%;margin-right:4px}
+  .hero{background:#222824;color:#fff;border-radius:10px;padding:15px}.hero-top{display:flex;justify-content:space-between;color:#acb6ae;font-size:10px}.source{color:#fff}.state{display:flex;justify-content:space-between;align-items:end;margin-top:9px}.state b{font-size:24px}.state span{font:700 11px monospace;color:#efbc42}.bar{display:flex;gap:5px;margin-top:14px}.bar i{height:5px;flex:1;background:#4e5751;border-radius:5px}
+  .title{font-size:12px;font-weight:900;margin:17px 2px 8px}.grid{display:grid;grid-template-columns:repeat(3,1fr);gap:7px}.btn{border:1px solid #d6dbd5;background:#fff;border-radius:8px;padding:14px 3px;text-align:center;font-size:12px;font-weight:800}.btn.active{border-color:#dd4a2f;color:#c73d25;background:#fff9f7}
+  .device{display:grid;grid-template-columns:1fr 1fr;gap:7px}.item{background:#fff;border:1px solid #d6dbd5;border-radius:8px;padding:13px 11px;font-size:11px;font-weight:800}.toggle{float:right;color:#25814e;font-weight:700}
+  .foot{text-align:center;color:#7b837d;font-size:9px;margin-top:14px}.decision{max-width:700px;margin:18px auto}
+</style>
+<h2>精简版最终稿</h2>
+<p class="subtitle">只保留必要文字。状态一眼可见，操作一步完成。</p>
+<div class="stage">
+  <div class="top"><span class="brand">Clawd Mochi</span><span class="online"><i class="dot"></i>在线</span></div>
+  <div class="hero">
+    <div class="hero-top"><span>工作状态</span><span class="source">Codex</span></div>
+    <div class="state"><b>待机中</b><span>IDLE</span></div>
+    <div class="bar"><i></i><i></i><i></i><i></i></div>
+  </div>
+  <div class="title">屏幕显示</div>
+  <div class="grid"><div class="btn active">正常</div><div class="btn">专注</div><div class="btn">开心</div></div>
+  <div class="title">设备</div>
+  <div class="device"><div class="item"><span class="toggle">开启</span>屏幕背光</div><div class="item">OTA 升级</div></div>
+  <div class="foot">状态自动同步</div>
+</div>
+<div class="decision">
+  <h3>保留的信息</h3>
+  <p>设备在线状态、工作来源与阶段、常用显示、背光、OTA。成功反馈使用短暂提示；连接失败时才显示错误说明。</p>
+</div>
+<div class="options">
+  <div class="option" data-choice="approve-compact" onclick="toggleSelect(this)"><div class="letter">✓</div><div class="content"><h3>批准精简版</h3><p>按此稿进入实现。</p></div></div>
+  <div class="option" data-choice="revise-compact" onclick="toggleSelect(this)"><div class="letter">↺</div><div class="content"><h3>继续调整</h3><p>说明还需要删减或修改的部分。</p></div></div>
+</div>
