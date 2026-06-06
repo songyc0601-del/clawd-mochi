@@ -4,7 +4,7 @@
 
 **Goal:** Implement a Codex core-pulse status screen that appears only while Codex is online, and returns to the default Clawd animation when Codex is offline.
 
-**Architecture:** Keep the existing firmware protocol compatible and add `OFFLINE` as a safe status alias for “return to default view.” The firmware owns display semantics: `OFFLINE` draws the default Clawd animation, while `IDLE / PLAN / CODE / TEST / DONE / BLOCK` draw the Codex core-pulse layer. The client watcher owns lifecycle hints by pushing `IDLE codex-ready` on startup and `OFFLINE codex-offline` when no Codex session is available or the watcher exits.
+**Architecture:** Keep the existing firmware protocol compatible and add `OFFLINE` as a public status for “return to default view.” The firmware owns display semantics: `OFFLINE` draws the default Clawd animation without calling `markAction()`, while `IDLE / PLAN / CODE / TEST / DONE / BLOCK` draw the Codex core-pulse layer and update the Codex heartbeat. The client watcher owns lifecycle hints, re-sends the current meaningful state every 60 seconds, and sends `OFFLINE codex-offline` only when no Codex session exists or a long-running watcher exits.
 
 **Tech Stack:** Arduino C++ for ESP32-C3, Adafruit ST7789 drawing primitives, Bash/PowerShell watcher scripts, repository static shell tests. Do not run Arduino compilation while the ESP32 core is still missing or downloading.
 
@@ -14,6 +14,8 @@
 
 - Modify: `clawd_mochi/clawd_mochi.ino`
   - Add `OFFLINE` status handling.
+  - Add 120 second device-side Codex heartbeat timeout.
+  - Keep `OFFLINE` out of `markAction()` handling for HTTP and USB.
   - Replace the old progress dashboard with the Codex core-pulse screen.
   - Keep default Clawd animation as the offline/default display.
   - Keep `/progress`, `/state`, and USB `PROGRESS` compatibility.
@@ -24,10 +26,16 @@
 - Modify: `tools/codex-stage.ps1`
   - Accept `OFFLINE` in `ValidateSet`.
 - Modify: `tools/codex-watch.sh`
-  - Push `IDLE codex-ready` when a Codex session directory exists but no active task is detected.
-  - Push `OFFLINE codex-offline` when no session directory/file exists or when the watcher exits.
+  - Add `--heartbeat SECONDS`, default 60.
+  - Push `PLAN codex-session` for a new recent session, then `CODE active` only after a later mtime change.
+  - Preserve `DONE turn-complete` until 300 seconds of inactivity.
+  - Push `IDLE codex-ready` only when a long-running watcher still has a session but no active task remains.
+  - Push `OFFLINE codex-offline` when no session file exists or when the long-running watcher exits.
+  - Do not send exit `OFFLINE` in `--once` mode.
 - Modify: `tools/codex-watch.ps1`
   - Mirror the watcher lifecycle behavior for Windows.
+- Modify: embedded Web page in `clawd_mochi/clawd_mochi.ino` and `dist/clawd_mochi/clawd_mochi.ino`
+  - Display `OFFLINE` as `Codex 离线`, progress 0/4.
 - Create: `tools/test-codex-status-avatar.sh`
   - Static contract test for the firmware and scripts.
 - Modify: `README.zh-CN.md`
@@ -72,7 +80,12 @@ required_fw=(
   'void drawProgressBars(uint8_t stage, uint16_t col)'
   'String progressDefaultMessage(const String& state)'
   'if (state == PROGRESS_OFFLINE)'
-  'drawNormalEyes()'
+  'void drawDefaultClawdView()'
+  'const uint32_t CODEX_OFFLINE_TIMEOUT_MS = 120000UL;'
+  'uint32_t lastCodexProgressMs = 0;'
+  'void checkCodexOfflineTimeout()'
+  'codex-timeout'
+  'normalized != PROGRESS_OFFLINE'
   'progressPulsePhase'
   'Codex core-pulse status layer'
 )
@@ -94,9 +107,13 @@ if ! grep -Fq 'States: OFFLINE, IDLE, PLAN, CODE, TEST, DONE, BLOCK, STATE' "$ST
 fi
 
 required_watch=(
-  'push_state "IDLE" "codex-ready"'
+  'HEARTBEAT_SECONDS="${HEARTBEAT_SECONDS:-60}"'
+  '--heartbeat'
+  'push_state "PLAN" "codex-session"'
   'push_state "OFFLINE" "codex-offline"'
   'trap cleanup EXIT INT TERM'
+  'if [ "$ONCE" = "0" ]'
+  'send_heartbeat'
 )
 
 for text in "${required_watch[@]}"; do
@@ -176,6 +193,9 @@ const String PROGRESS_BLOCK   = "BLOCK";
 String   progressState = PROGRESS_OFFLINE;
 String   progressMsg   = "";
 uint8_t  progressPulsePhase = 0;
+uint32_t lastCodexProgressMs = 0;
+
+const uint32_t CODEX_OFFLINE_TIMEOUT_MS = 120000UL;
 ```
 
 - [ ] **Step 2: Replace progress state validation**
@@ -229,6 +249,8 @@ String progressDefaultMessage(const String& state) {
 }
 ```
 
+Use fixed color semantics: `IDLE` low-brightness gray, `PLAN` blue, `CODE` orange, `TEST` teal, `DONE` green, `BLOCK` red.
+
 - [ ] **Step 4: Add core-pulse drawing helpers**
 
 Place these before `drawProgressView()`:
@@ -267,7 +289,23 @@ void drawCodexScanLine(uint16_t col, uint8_t pulse) {
 }
 ```
 
-- [ ] **Step 5: Replace `drawProgressView()`**
+`drawProgressBars(0, col)` must render four dark segments and no `0/4` text. `BLOCK` uses stage `4` with red.
+
+- [ ] **Step 5: Add default Clawd fallback helper**
+
+Add this helper near `showNormal()` or before `drawProgressView()`:
+
+```cpp
+void drawDefaultClawdView() {
+  termMode = false;
+  currentView = VIEW_EYES_NORMAL;
+  animNormalEyes();
+}
+```
+
+Do not call `markAction()` from this helper. `OFFLINE` is a system status transition, not a user action.
+
+- [ ] **Step 6: Replace `drawProgressView()`**
 
 Replace the current `drawProgressView()` body with:
 
@@ -276,7 +314,7 @@ void drawProgressView() {
   termMode = false;
 
   if (progressState == PROGRESS_OFFLINE) {
-    showNormal();
+    drawDefaultClawdView();
     return;
   }
 
@@ -312,7 +350,7 @@ void drawProgressView() {
 }
 ```
 
-- [ ] **Step 6: Update `setProgress()` and startup default**
+- [ ] **Step 7: Update `setProgress()` and startup default**
 
 In `setProgress()`, keep validation and add the offline branch:
 
@@ -326,6 +364,7 @@ bool setProgress(String state, String msg) {
   progressBlinkOn = true;
   progressPulsePhase = 0;
   lastProgressBlinkMs = millis();
+  if (state != PROGRESS_OFFLINE) lastCodexProgressMs = millis();
   drawProgressView();
   return true;
 }
@@ -343,7 +382,21 @@ with:
 progressState = PROGRESS_OFFLINE;
 ```
 
-- [ ] **Step 7: Replace `progressTick()`**
+- [ ] **Step 8: Add device-side Codex timeout**
+
+Add:
+
+```cpp
+void checkCodexOfflineTimeout() {
+  if (!isCodexLayerState(progressState)) return;
+  if (millis() - lastCodexProgressMs < CODEX_OFFLINE_TIMEOUT_MS) return;
+  setProgress(PROGRESS_OFFLINE, "codex-timeout");
+}
+```
+
+Call `checkCodexOfflineTimeout();` from `loop()` before or after `progressTick()`. Do not call `markAction()` from the timeout path.
+
+- [ ] **Step 9: Replace `progressTick()`**
 
 Replace the current `progressTick()` with:
 
@@ -367,7 +420,63 @@ void progressTick() {
 }
 ```
 
-- [ ] **Step 8: Mirror firmware file**
+- [ ] **Step 10: Update HTTP and USB progress entry points**
+
+Replace `routeProgress()` so `OFFLINE` does not call `markAction()`:
+
+```cpp
+void routeProgress() {
+  const String state = server.hasArg("state") ? server.arg("state") : "";
+  const String msg = server.hasArg("msg") ? server.arg("msg") : "";
+
+  String normalized = state;
+  normalized.trim();
+  normalized.toUpperCase();
+  if (normalized != PROGRESS_OFFLINE) markAction();
+
+  if (!setProgress(state, msg)) {
+    server.send(400, "application/json", "{\"e\":1}");
+    return;
+  }
+  server.send(200, "application/json", "{\"ok\":1}");
+}
+```
+
+In `handleSerialCommand()`, replace the `PROGRESS` branch with:
+
+```cpp
+  if (upper.startsWith("PROGRESS ")) {
+    const int firstSpace = line.indexOf(' ', 9);
+    String state = firstSpace < 0 ? line.substring(9) : line.substring(9, firstSpace);
+    String msg = firstSpace < 0 ? "" : line.substring(firstSpace + 1);
+
+    String normalized = state;
+    normalized.trim();
+    normalized.toUpperCase();
+    if (normalized != PROGRESS_OFFLINE) markAction();
+
+    if (setProgress(state, msg)) return "OK";
+    return "ERR bad-state";
+  }
+```
+
+- [ ] **Step 11: Update embedded Web page state labels**
+
+In the compact Web page JavaScript labels, add:
+
+```js
+OFFLINE:'Codex 离线'
+```
+
+In the steps mapping, add:
+
+```js
+OFFLINE:0
+```
+
+Ensure `OFFLINE` is not shown as `待机中`.
+
+- [ ] **Step 12: Mirror firmware file**
 
 Run:
 
@@ -375,7 +484,7 @@ Run:
 cp clawd_mochi/clawd_mochi.ino dist/clawd_mochi/clawd_mochi.ino
 ```
 
-- [ ] **Step 9: Run static test**
+- [ ] **Step 13: Run static test**
 
 Run:
 
@@ -389,7 +498,7 @@ Expected:
 Codex status avatar contract passed
 ```
 
-- [ ] **Step 10: Commit firmware display changes**
+- [ ] **Step 14: Commit firmware display changes**
 
 Run:
 
@@ -408,7 +517,7 @@ git commit -m "实现 Codex 核心脉冲状态屏"
 - Modify: `tools/codex-watch.sh`
 - Modify: `tools/codex-watch.ps1`
 
-- [ ] **Step 1: Update shell stage help**
+- [ ] **Step 1: Update shell stage help and watcher options**
 
 In `tools/codex-stage.sh`, replace:
 
@@ -422,6 +531,33 @@ with:
 States: OFFLINE, IDLE, PLAN, CODE, TEST, DONE, BLOCK, STATE
 ```
 
+In `tools/codex-watch.sh`, add the default:
+
+```bash
+HEARTBEAT_SECONDS="${HEARTBEAT_SECONDS:-60}"
+```
+
+Add option parsing:
+
+```bash
+    --heartbeat)
+      HEARTBEAT_SECONDS="${2:-}"
+      shift 2
+      ;;
+```
+
+Update usage:
+
+```text
+  --heartbeat SECONDS   Re-send current online state. Default: 60
+```
+
+Update environment list to include:
+
+```text
+HEARTBEAT_SECONDS
+```
+
 - [ ] **Step 2: Update PowerShell stage validation**
 
 In `tools/codex-stage.ps1`, replace the `ValidateSet` with:
@@ -430,19 +566,48 @@ In `tools/codex-stage.ps1`, replace the `ValidateSet` with:
 [ValidateSet("OFFLINE", "IDLE", "PLAN", "CODE", "TEST", "DONE", "BLOCK", "STATE")]
 ```
 
-- [ ] **Step 3: Add watcher cleanup in shell watcher**
+- [ ] **Step 3: Add shell watcher cleanup that skips `--once`**
 
 After variable initialization in `tools/codex-watch.sh`, add:
 
 ```bash
 cleanup() {
-  push_state "OFFLINE" "codex-offline"
+  if [ "$ONCE" = "0" ]; then
+    push_state "OFFLINE" "codex-offline"
+  fi
 }
 
 trap cleanup EXIT INT TERM
 ```
 
-- [ ] **Step 4: Change no-session handling in shell watcher**
+- [ ] **Step 4: Add shell watcher heartbeat helper**
+
+Add:
+
+```bash
+last_heartbeat=0
+
+send_heartbeat() {
+  local now="$1"
+  if [ "$current_state" = "OFFLINE" ] || [ -z "$current_state" ]; then
+    return 0
+  fi
+  if [ $((now - last_heartbeat)) -lt "$HEARTBEAT_SECONDS" ]; then
+    return 0
+  fi
+
+  case "$current_state" in
+    PLAN)  push_state "PLAN" "codex-session" ;;
+    CODE)  push_state "CODE" "active" ;;
+    DONE)  push_state "DONE" "turn-complete" ;;
+    BLOCK) push_state "BLOCK" "need-input" ;;
+    IDLE)  push_state "IDLE" "codex-ready" ;;
+  esac
+  last_heartbeat="$now"
+}
+```
+
+- [ ] **Step 5: Change no-session handling in shell watcher**
 
 In `poll_once()`, replace the no-session branch with:
 
@@ -456,39 +621,78 @@ In `poll_once()`, replace the no-session branch with:
   fi
 ```
 
-- [ ] **Step 5: Change stale-session handling in shell watcher**
+- [ ] **Step 6: Change new-session age handling in shell watcher**
 
-In the new-session branch, replace the stale case:
-
-```bash
-      push_state "IDLE" "idle"
-      current_state="IDLE"
-```
-
-with:
+In the new-session branch, implement this exact age behavior:
 
 ```bash
+    if [ "$age" -le "$DONE_AFTER_SECONDS" ]; then
+      push_state "PLAN" "codex-session"
+      current_state="PLAN"
+      last_heartbeat="$now"
+    elif [ "$age" -lt "$IDLE_AFTER_SECONDS" ]; then
+      push_state "DONE" "turn-complete"
+      current_state="DONE"
+      done_sent=1
+      last_heartbeat="$now"
+    else
       push_state "OFFLINE" "codex-offline"
       current_state="OFFLINE"
+      done_sent=1
+      idle_sent=1
+    fi
 ```
 
-- [ ] **Step 6: Change long inactivity handling in shell watcher**
+Do not immediately push `CODE active` after `PLAN`. `CODE` is only sent after a later mtime change.
 
-Replace the long inactivity push:
+- [ ] **Step 7: Change mtime-change handling in shell watcher**
+
+When the same latest session file changes, keep the existing `CODE active` transition:
 
 ```bash
-    push_state "IDLE" "idle"
-    current_state="IDLE"
+  if [ "$mtime" != "$last_mtime" ]; then
+    last_mtime="$mtime"
+    last_activity="$mtime"
+    done_sent=0
+    idle_sent=0
+    if [ "$current_state" != "CODE" ]; then
+      push_state "CODE" "active"
+      current_state="CODE"
+      last_heartbeat="$now"
+    fi
+    return 0
+  fi
 ```
 
-with:
+- [ ] **Step 8: Change long inactivity handling in shell watcher**
+
+Use this order after mtime checks:
 
 ```bash
+  age=$((now - last_activity))
+
+  if [ "$age" -ge "$IDLE_AFTER_SECONDS" ] && [ "$idle_sent" = "0" ] && [ "$current_state" != "BLOCK" ]; then
     push_state "IDLE" "codex-ready"
     current_state="IDLE"
+    idle_sent=1
+    last_heartbeat="$now"
+    return 0
+  fi
+
+  if [ "$age" -ge "$DONE_AFTER_SECONDS" ] && [ "$done_sent" = "0" ] && [ "$current_state" != "BLOCK" ]; then
+    push_state "DONE" "turn-complete"
+    current_state="DONE"
+    done_sent=1
+    last_heartbeat="$now"
+    return 0
+  fi
+
+  send_heartbeat "$now"
 ```
 
-- [ ] **Step 7: Update Windows watcher validation and cleanup**
+This preserves `DONE` until 300 seconds, never automatically downgrades `BLOCK`, and re-sends the current state every heartbeat interval.
+
+- [ ] **Step 9: Update Windows watcher validation and behavior**
 
 In `tools/codex-watch.ps1`, set the state validator to:
 
@@ -496,31 +700,49 @@ In `tools/codex-watch.ps1`, set the state validator to:
 [ValidateSet("OFFLINE", "IDLE", "PLAN", "CODE", "TEST", "DONE", "BLOCK")]
 ```
 
-Register cleanup after function definitions:
+Add parameter:
+
+```powershell
+[int]$HeartbeatSeconds = 60
+```
+
+Register cleanup, skipping `-Once`:
 
 ```powershell
 Register-EngineEvent PowerShell.Exiting -Action {
-  try {
-    & $StageScript -DeviceUrl $DeviceUrl -State OFFLINE -Message "codex-offline" | Out-Null
-  } catch {}
+  if (-not $Once) {
+    try {
+      & $StageScript -DeviceUrl $DeviceUrl -State OFFLINE -Message "codex-offline" | Out-Null
+    } catch {}
+  }
 } | Out-Null
 ```
 
-Change no-session and stale-session pushes from `IDLE no-session` or `IDLE idle` to:
+Mirror shell behavior:
 
 ```powershell
+# No session:
 Push-State -State OFFLINE -Message "codex-offline"
 $script:currentState = "OFFLINE"
-```
 
-Change long inactivity to:
+# New recent session:
+Push-State -State PLAN -Message "codex-session"
+$script:currentState = "PLAN"
 
-```powershell
+# Later mtime change:
+Push-State -State CODE -Message "active"
+$script:currentState = "CODE"
+
+# DONE threshold:
+Push-State -State DONE -Message "turn-complete"
+$script:currentState = "DONE"
+
+# IDLE threshold, unless current state is BLOCK:
 Push-State -State IDLE -Message "codex-ready"
 $script:currentState = "IDLE"
 ```
 
-- [ ] **Step 8: Run script syntax checks**
+- [ ] **Step 10: Run script syntax checks**
 
 Run:
 
@@ -528,6 +750,7 @@ Run:
 bash -n tools/codex-stage.sh
 bash -n tools/codex-watch.sh
 ./tools/codex-watch.sh --once --verbose --stage-script /bin/true
+./tools/codex-watch.sh --once --verbose --stage-script /bin/true --heartbeat 10
 ./tools/test-codex-status-avatar.sh
 ```
 
@@ -538,9 +761,9 @@ Expected:
 Codex status avatar contract passed
 ```
 
-PowerShell scripts are not run in WSL unless `pwsh` or Windows PowerShell is available.
+PowerShell scripts are not run in WSL unless `pwsh` or Windows PowerShell is available. Confirm by inspection that `-Once` cleanup does not send `OFFLINE`.
 
-- [ ] **Step 9: Commit script changes**
+- [ ] **Step 11: Commit script changes**
 
 Run:
 
@@ -567,6 +790,8 @@ In `README.zh-CN.md`, update the Codex status description to include:
 - Codex 打开但暂无任务时，显示 `IDLE` Codex 核心脉冲待机屏。
 - `PLAN / CODE / TEST / DONE / BLOCK` 显示 Codex 核心脉冲状态屏。
 - `OFFLINE` 可用于脚本显式请求回到默认 Clawd 动画形象。
+- `/state` 会返回 `progress:"OFFLINE"`，`progressMsg` 保留 `codex-offline` 或 `codex-timeout` 等离线原因。
+- Web 控制页显示 `OFFLINE` 为“Codex 离线”，不能显示为“待机中”。
 ```
 
 - [ ] **Step 2: Update client sync document**
@@ -574,11 +799,18 @@ In `README.zh-CN.md`, update the Codex status description to include:
 In `docs/codex-client-status-sync.zh-CN.md`, update watcher behavior to:
 
 ```markdown
-- watcher 启动并发现 Codex session：推送 `IDLE codex-ready`，表示 Codex 在线待机。
-- session 文件近期变化：推送 `PLAN codex-session`，随后推送 `CODE active`。
+- watcher 启动时若最新 session 在 20 秒内：推送 `PLAN codex-session`。
+- watcher 启动时若最新 session 在 20-300 秒内：推送 `DONE turn-complete`。
+- watcher 启动时若最新 session 超过 300 秒，或未发现 session：推送 `OFFLINE codex-offline`。
+- session 文件后续变化：推送 `CODE active`。
 - 默认 20 秒无变化：推送 `DONE turn-complete`。
 - 默认 300 秒无变化：推送 `IDLE codex-ready`。
-- 未发现 session、watcher 退出或 Codex 离线：推送 `OFFLINE codex-offline`，设备回到默认 Clawd 动画形象。
+- `DONE` 在 300 秒内通过心跳保持，不被心跳覆盖成 `IDLE`。
+- `BLOCK` 不自动降级为 `DONE` 或 `IDLE`，只由明确新状态或离线超时替换。
+- watcher 心跳默认 60 秒，可通过 `--heartbeat` 或 `HEARTBEAT_SECONDS` 配置。
+- `--once` / `-Once` 退出时不发送 `OFFLINE`。
+- 长期 watcher 退出、未发现 session 或 Codex 离线：推送 `OFFLINE codex-offline`，设备回到默认 Clawd 动画形象。
+- 设备端 120 秒未收到非 `OFFLINE` 状态：自动回到 `OFFLINE codex-timeout`。
 ```
 
 - [ ] **Step 3: Update USB serial document**
@@ -599,6 +831,7 @@ Add the behavior note:
 
 ```markdown
 `OFFLINE` 不表示 Codex 的工作阶段；它表示 Codex 客户端离线或 watcher 停止，设备应回到默认 Clawd 动画形象。
+`PROGRESS OFFLINE ...` 不应被固件记录为用户操作；其他 `PROGRESS` 状态可以记录为活动。
 ```
 
 - [ ] **Step 4: Run documentation/static checks**
@@ -607,7 +840,7 @@ Run:
 
 ```bash
 ./tools/test-codex-status-avatar.sh
-rg -n "OFFLINE|codex-ready|codex-offline" README.zh-CN.md docs/codex-client-status-sync.zh-CN.md docs/usb-serial-codex.zh-CN.md
+rg -n "OFFLINE|codex-ready|codex-offline|codex-timeout|heartbeat|心跳|Codex 离线" README.zh-CN.md docs/codex-client-status-sync.zh-CN.md docs/usb-serial-codex.zh-CN.md
 ```
 
 Expected:
