@@ -18,11 +18,15 @@ powershell -ExecutionPolicy Bypass -File .\tools\codex-progress.ps1 -Port COM7 -
 powershell -ExecutionPolicy Bypass -File .\tools\codex-progress.ps1 -Port COM7 -State TEST -Message verifying
 powershell -ExecutionPolicy Bypass -File .\tools\codex-progress.ps1 -Port COM7 -State DONE -Message complete
 powershell -ExecutionPolicy Bypass -File .\tools\codex-progress.ps1 -Port COM7 -State BLOCK -Message need-input
+powershell -ExecutionPolicy Bypass -File .\tools\codex-progress.ps1 -Port COM7 -State OFFLINE -Message codex-offline
 ```
 
-`IDLE` 返回 `CODEX` + Clawd 眼睛待机页。其他状态会自动切到任务页：
+`OFFLINE` 表示 Codex 离线，设备回到默认 Clawd 动画形象，并在 `/state` 中保留 `progressMsg` 作为原因，例如 `codex-offline` 或 `codex-timeout`。
+
+`IDLE` 表示 Codex 已在线但暂无任务，会显示 Codex 核心低亮待机屏。其他非离线状态会自动切到 Codex 核心脉冲状态屏：
 
 ```text
+OFFLINE
 IDLE
 PLAN
 CODE
@@ -31,23 +35,28 @@ DONE
 BLOCK
 ```
 
-`PLAN / CODE / TEST` 为闪烁黄灯，并显示 1/4、2/4、3/4 阶段条；`DONE` 为绿灯和 4/4；`BLOCK` 为红灯。
+`PLAN / CODE / TEST / DONE / BLOCK` 使用状态色、英文状态词和 4 段阶段条；`BLOCK` 为红色满格。`OFFLINE` 不会被固件记为用户活动，其他进度状态可以记为活动。
 
 ## 自动对接当前 Codex
 
-项目根目录的 `AGENTS.md` 要求 Codex 在工作过程中主动推送阶段状态：
+推荐的自动对接方式是在客户端侧启动 watcher、hook、wrapper 或定时任务，自动观察 Codex 运行状态并推送到设备，而不是依赖模型在工作过程中手动调用脚本。
+
+客户端侧状态映射建议：
 
 - 开始分析或规划：`PLAN`
 - 开始修改文件：`CODE`
 - 开始编译、烧录或验证：`TEST`
 - 完成：`DONE`
 - 确实需要用户输入：`BLOCK`
+- Codex 未打开、没有 session、watcher 停止或客户端离线：`OFFLINE`
 
-阶段推送使用 `tools/codex-stage.ps1`。默认优先访问设备热点地址 `http://192.168.4.1`，WiFi 不可用时自动回退到 `COM7` USB 串口。电脑和设备连接同一个局域网时，可以用 `-DeviceUrl http://设备局域网IP` 直接推送，无需电脑加入设备热点。
+Windows 手动推送或 hook 推送可以使用 `tools/codex-stage.ps1`。默认优先访问设备热点地址 `http://192.168.4.1`，WiFi 不可用时自动回退到 `COM7` USB 串口。电脑和设备连接同一个局域网时，可以用 `-DeviceUrl http://设备局域网IP` 直接推送，无需电脑加入设备热点。
 
 Codex Desktop 的 `notify` 已配置为调用 `tools/codex-notify.ps1`。每个 Codex 工作回合结束时，它会自动推送 `DONE turn-complete`，同时继续调用原有 Computer Use 通知程序。设备未连接时通知脚本会静默跳过，不影响 Codex。
 
-Codex Desktop 目前不公开内部 `PLAN / CODE / TEST` 阶段事件，因此这些阶段由 Codex 在执行过程中或用户通过 `codex-progress.ps1` 主动推送，避免显示错误阶段。
+Codex Desktop 目前不公开内部 `PLAN / CODE / TEST` 阶段事件，因此这些状态应由客户端 watcher、wrapper、日志观察或后续官方事件接口推断。不要把模型手动推送作为长期方案。
+
+更完整的客户端方案见 [Codex 客户端状态同步方案](codex-client-status-sync.zh-CN.md)。
 
 首次配置通知后建议重启一次 Codex Desktop，确保新的 `notify` 配置被当前应用进程加载。
 
@@ -75,6 +84,7 @@ CMD normal
 BL 0
 BL 1
 PROGRESS IDLE
+PROGRESS OFFLINE codex-offline
 PROGRESS CODE editing
 ```
 
@@ -83,5 +93,5 @@ PROGRESS CODE editing
 - WiFi 网页控制保留，适合手机操作。
 - USB 串口控制新增，适合电脑自动化和 Codex 进度推送。
 - 两种方式可以交替使用。
-- 如果串口推送了 Codex 进度，屏幕会自动切到进度页；手机网页仍然可以切回正常、专注或开心表情。
+- 如果串口推送了非 `OFFLINE` Codex 进度，屏幕会自动切到 Codex 状态屏；推送 `PROGRESS OFFLINE` 会回到默认 Clawd 动画形象。手机网页仍然可以切回正常、专注或开心表情。
 - 已删除串口表情、自动待机、速度、终端和画板命令；这些命令会返回 `ERR unknown-command`。

@@ -87,8 +87,20 @@ bool     progressBlinkOn = true;
 
 uint16_t animBgColor  = 0;   // background for eye/logo animations
 uint16_t drawBgColor  = 0;   // background for canvas
-String   progressState = "IDLE";
+const String PROGRESS_OFFLINE = "OFFLINE";
+const String PROGRESS_IDLE    = "IDLE";
+const String PROGRESS_PLAN    = "PLAN";
+const String PROGRESS_CODE    = "CODE";
+const String PROGRESS_TEST    = "TEST";
+const String PROGRESS_DONE    = "DONE";
+const String PROGRESS_BLOCK   = "BLOCK";
+
+String   progressState = PROGRESS_OFFLINE;
 String   progressMsg   = "";
+uint8_t  progressPulsePhase = 0;
+uint32_t lastCodexProgressMs = 0;
+
+const uint32_t CODEX_OFFLINE_TIMEOUT_MS = 120000UL;
 String   serialLine    = "";
 
 // ── Terminal ──────────────────────────────────────────────────
@@ -401,18 +413,43 @@ void drawCodeView() {
 }
 
 uint16_t progressColor(const String& state) {
-  if (state == "IDLE")  return C_ORANGE;
-  if (state == "PLAN")  return tft.color565(70, 130, 220);
-  if (state == "CODE")  return C_ORANGE;
-  if (state == "TEST")  return C_GREEN;
-  if (state == "DONE")  return tft.color565(40, 200, 100);
-  if (state == "BLOCK") return tft.color565(230, 60, 40);
+  if (state == PROGRESS_OFFLINE) return C_ORANGE;
+  if (state == PROGRESS_IDLE)    return tft.color565(110, 116, 124);
+  if (state == PROGRESS_PLAN)    return tft.color565(70, 130, 220);
+  if (state == PROGRESS_CODE)    return C_ORANGE;
+  if (state == PROGRESS_TEST)    return tft.color565(50, 208, 176);
+  if (state == PROGRESS_DONE)    return tft.color565(40, 200, 100);
+  if (state == PROGRESS_BLOCK)   return tft.color565(230, 60, 40);
   return C_MUTED;
 }
 
+bool isCodexLayerState(const String& state) {
+  return state == PROGRESS_IDLE || state == PROGRESS_PLAN || state == PROGRESS_CODE ||
+         state == PROGRESS_TEST || state == PROGRESS_DONE || state == PROGRESS_BLOCK;
+}
+
 bool isProgressState(const String& state) {
-  return state == "IDLE" || state == "PLAN" || state == "CODE" || state == "TEST" ||
-         state == "DONE" || state == "BLOCK";
+  return state == PROGRESS_OFFLINE || isCodexLayerState(state);
+}
+
+uint8_t progressStage(const String& state) {
+  if (state == PROGRESS_PLAN)  return 1;
+  if (state == PROGRESS_CODE)  return 2;
+  if (state == PROGRESS_TEST)  return 3;
+  if (state == PROGRESS_DONE)  return 4;
+  if (state == PROGRESS_BLOCK) return 4;
+  return 0;
+}
+
+String progressDefaultMessage(const String& state) {
+  if (state == PROGRESS_OFFLINE) return "codex-offline";
+  if (state == PROGRESS_IDLE)  return "codex-ready";
+  if (state == PROGRESS_PLAN)  return "planning";
+  if (state == PROGRESS_CODE)  return "active";
+  if (state == PROGRESS_TEST)  return "verifying";
+  if (state == PROGRESS_DONE)  return "turn-complete";
+  if (state == PROGRESS_BLOCK) return "need-input";
+  return "";
 }
 
 String cleanAscii(String text, uint8_t maxLen) {
@@ -425,75 +462,75 @@ String cleanAscii(String text, uint8_t maxLen) {
   return out;
 }
 
+void drawProgressBars(uint8_t stage, uint16_t col) {
+  const uint16_t off = tft.color565(48, 50, 56);
+  for (uint8_t i = 0; i < 4; i++) {
+    const int16_t x = 34 + i * 45;
+    tft.fillRoundRect(x, 148, 38, 9, 3, i < stage ? col : off);
+  }
+}
+
+void drawCodexCore(uint16_t col, uint8_t pulse) {
+  const uint16_t dim = tft.color565(36, 38, 44);
+  const uint8_t ring = 28 + (pulse % 3) * 4;
+  tft.fillRect(58, 42, 124, 92, C_DARKBG);
+  tft.drawCircle(120, 88, ring, col);
+  tft.drawCircle(120, 88, ring + 12, dim);
+  tft.fillCircle(120, 88, 18, col);
+  tft.fillCircle(120, 88, 8, C_WHITE);
+}
+
+void drawCodexScanLine(uint16_t col, uint8_t pulse) {
+  const int16_t y = 58 + (pulse % 4) * 16;
+  tft.drawFastHLine(78, y, 84, col);
+}
+
+void drawDefaultClawdView() {
+  termMode = false;
+  currentView = VIEW_EYES_NORMAL;
+  drawNormalEyes();
+}
+
 void drawProgressView() {
   termMode = false;
-  currentView = VIEW_PROGRESS;
-  if (progressState == "IDLE") {
-    drawCodexIdleView();
+  if (progressState == PROGRESS_OFFLINE) {
+    drawDefaultClawdView();
     return;
   }
+
+  currentView = VIEW_PROGRESS;
   const uint16_t col = progressColor(progressState);
-  const uint16_t red = tft.color565(230, 60, 40);
-  const uint16_t yellow = tft.color565(240, 180, 40);
-  const uint16_t green = tft.color565(40, 200, 100);
-  const uint16_t off = tft.color565(36, 36, 40);
-  const bool running = progressState == "PLAN" || progressState == "CODE" || progressState == "TEST";
+  const uint8_t stage = progressStage(progressState);
+  String message = progressMsg.length() > 0 ? progressMsg : progressDefaultMessage(progressState);
   tft.fillScreen(C_DARKBG);
   tft.fillRect(0, 0, DISP_W, 6, col);
   tft.fillRect(0, DISP_H - 6, DISP_W, 6, col);
 
   tft.setTextColor(C_MUTED); tft.setTextSize(1);
-  tft.setCursor(12, 18); tft.print("CODEX TASK");
+  tft.setCursor(12, 18); tft.print("CODEX");
+  tft.fillCircle(222, 21, 4, col);
 
-  tft.drawCircle(84, 48, 10, red);
-  tft.drawCircle(120, 48, 10, yellow);
-  tft.drawCircle(156, 48, 10, green);
-  tft.fillCircle(84, 48, 8, progressState == "BLOCK" ? red : off);
-  tft.fillCircle(120, 48, 8, running && progressBlinkOn ? yellow : off);
-  tft.fillCircle(156, 48, 8, progressState == "DONE" ? green : off);
+  // Codex core-pulse status layer.
+  drawCodexCore(col, progressPulsePhase);
+  if (progressState == PROGRESS_TEST) drawCodexScanLine(col, progressPulsePhase);
+
+  drawProgressBars(stage, progressState == PROGRESS_BLOCK ? progressColor(PROGRESS_BLOCK) : col);
 
   tft.setTextColor(col); tft.setTextSize(4);
   int16_t x = (DISP_W - progressState.length() * 24) / 2;
   if (x < 0) x = 0;
-  tft.setCursor(x, 86); tft.print(progressState);
+  tft.setCursor(x, 172); tft.print(progressState);
 
-  tft.drawRect(30, 148, 180, 14, col);
-  uint8_t stage = 1;
-  if (progressState == "CODE") stage = 2;
-  else if (progressState == "TEST") stage = 3;
-  else if (progressState == "DONE") stage = 4;
-  else if (progressState == "BLOCK") stage = 4;
-  tft.fillRect(34, 152, stage * 43, 6, col);
-  tft.setTextColor(C_MUTED); tft.setTextSize(1);
-  tft.setCursor(92, 168); tft.print(stage); tft.print("/4");
-
-  if (progressMsg.length() > 0) {
+  if (message.length() > 0) {
     tft.setTextColor(C_WHITE); tft.setTextSize(1);
-    tft.setCursor(12, 194); tft.print(progressMsg);
+    int16_t mx = (DISP_W - message.length() * 6) / 2;
+    if (mx < 0) mx = 0;
+    tft.setCursor(mx, 214); tft.print(message);
   }
 }
 
 void drawCodexIdleView() {
-  termMode = false;
-  currentView = VIEW_PROGRESS;
-  tft.fillScreen(C_DARKBG);
-  tft.fillRect(0, 0, DISP_W, 6, C_ORANGE);
-  tft.setTextColor(C_MUTED); tft.setTextSize(1);
-  tft.setCursor(12, 18); tft.print("CODEX READY");
-
-  tft.setTextColor(C_ORANGE); tft.setTextSize(4);
-  tft.setCursor(60, 56); tft.print("CODEX");
-  tft.setTextColor(C_GREEN); tft.setTextSize(2);
-  tft.setCursor(176, 92); tft.print("_");
-
-  tft.fillRect(72, 132, 24, 44, C_WHITE);
-  tft.fillRect(144, 132, 24, 44, C_WHITE);
-  tft.fillRect(78, 140, 12, 28, C_BLACK);
-  tft.fillRect(150, 140, 12, 28, C_BLACK);
-
-  tft.fillCircle(120, 206, 5, C_GREEN);
-  tft.setTextColor(C_MUTED); tft.setTextSize(1);
-  tft.setCursor(86, 218); tft.print("waiting task");
+  drawProgressView();
 }
 
 bool setProgress(String state, String msg) {
@@ -502,22 +539,31 @@ bool setProgress(String state, String msg) {
   if (!isProgressState(state)) return false;
   progressState = state;
   progressMsg = cleanAscii(msg, 24);
+  if (progressMsg.length() == 0) progressMsg = progressDefaultMessage(state);
   progressBlinkOn = true;
+  progressPulsePhase = 0;
   lastProgressBlinkMs = millis();
+  if (state != PROGRESS_OFFLINE) lastCodexProgressMs = millis();
   drawProgressView();
   return true;
 }
 
 void progressTick() {
-  if (currentView != VIEW_PROGRESS || progressState == "IDLE" ||
-      progressState == "DONE" || progressState == "BLOCK") return;
+  if (currentView != VIEW_PROGRESS || !isCodexLayerState(progressState)) return;
   const uint32_t now = millis();
   if (now - lastProgressBlinkMs < 500) return;
   lastProgressBlinkMs = now;
   progressBlinkOn = !progressBlinkOn;
-  const uint16_t yellow = tft.color565(240, 180, 40);
-  const uint16_t off = tft.color565(36, 36, 40);
-  tft.fillCircle(120, 48, 8, progressBlinkOn ? yellow : off);
+  progressPulsePhase = (progressPulsePhase + 1) % 6;
+  drawCodexCore(progressColor(progressState), progressPulsePhase);
+  if (progressState == PROGRESS_TEST) drawCodexScanLine(progressColor(progressState), progressPulsePhase);
+}
+
+void checkCodexOfflineTimeout() {
+  if (!isCodexLayerState(progressState) || lastCodexProgressMs == 0) return;
+  if (millis() - lastCodexProgressMs >= CODEX_OFFLINE_TIMEOUT_MS) {
+    setProgress(PROGRESS_OFFLINE, "codex-timeout");
+  }
 }
 
 // ═════════════════════════════════════════════════════════════
@@ -1301,7 +1347,7 @@ const char INDEX_HTML_LITE[] PROGMEM = R"rawhtml(
 <button class="btn" onclick="location.href='/ota'">OTA &#x5347;&#x7EA7;</button>
 <button class="btn" onclick="location.href='/network'">&#x7F51;&#x7EDC;&#x8BBE;&#x7F6E;</button>
 </div></main><div class="toast" id="toast"></div><script>
-let bl=true;const $=id=>document.getElementById(id),labels={IDLE:'\u5f85\u673a\u4e2d',PLAN:'\u89c4\u5212\u4e2d',CODE:'\u7f16\u7801\u4e2d',TEST:'\u6d4b\u8bd5\u4e2d',DONE:'\u5df2\u5b8c\u6210',BLOCK:'\u88ab\u963b\u585e'},steps={IDLE:0,PLAN:1,CODE:2,TEST:3,DONE:4,BLOCK:4};
+let bl=true;const $=id=>document.getElementById(id),labels={OFFLINE:'Codex \u79bb\u7ebf',IDLE:'\u5f85\u673a\u4e2d',PLAN:'\u89c4\u5212\u4e2d',CODE:'\u7f16\u7801\u4e2d',TEST:'\u6d4b\u8bd5\u4e2d',DONE:'\u5df2\u5b8c\u6210',BLOCK:'\u88ab\u963b\u585e'},steps={OFFLINE:0,IDLE:0,PLAN:1,CODE:2,TEST:3,DONE:4,BLOCK:4};
 function toast(t){$('toast').textContent=t;$('toast').classList.add('show');setTimeout(()=>$('toast').classList.remove('show'),1000)}
 async function req(path){const r=await fetch(path);if(!r.ok)throw new Error();return r}
 async function cmd(n){try{await req('/cmd?k='+n);toast('\u5df2\u66f4\u65b0')}catch(e){failed()}}
@@ -1310,7 +1356,7 @@ async function toggleBL(){bl=!bl;try{await req('/backlight?on='+(bl?1:0));paintB
 function paintBL(){$('bl').textContent=bl?'\u5f00\u542f':'\u5173\u95ed';$('blBtn').classList.toggle('on',bl)}
 function failed(){$('online').textContent='\u79bb\u7ebf';$('online').classList.add('off');toast('\u8fde\u63a5\u5931\u8d25')}
 function paintProgress(s){$('progress').textContent=s;$('progressText').textContent=labels[s]||s;const bar=$('bar');bar.className='bar '+(s==='DONE'?'done':s==='BLOCK'?'block':'');[...bar.children].forEach((x,i)=>x.classList.toggle('on',i<(steps[s]||0)))}
-async function refresh(){try{const j=await (await req('/state')).json();bl=j.bl!==false;paintBL();paintProgress(j.progress||'IDLE');$('online').textContent='\u5728\u7ebf';$('online').classList.remove('off')}catch(e){failed()}}
+async function refresh(){try{const j=await (await req('/state')).json();bl=j.bl!==false;paintBL();paintProgress(j.progress||'OFFLINE');$('online').textContent='\u5728\u7ebf';$('online').classList.remove('off')}catch(e){failed()}}
 refresh();setInterval(refresh,5000);
 </script></body></html>
 )rawhtml";
@@ -1618,13 +1664,16 @@ void routeBacklight() {
 }
 
 void routeProgress() {
-  markAction();
   const String state = server.hasArg("state") ? server.arg("state") : "";
   const String msg = server.hasArg("msg") ? server.arg("msg") : "";
-  if (!setProgress(state, msg)) {
+  String normalized = state;
+  normalized.trim();
+  normalized.toUpperCase();
+  if (!setProgress(normalized, msg)) {
     server.send(400, "application/json", "{\"e\":1}");
     return;
   }
+  if (normalized != PROGRESS_OFFLINE) markAction();
   server.send(200, "application/json", "{\"ok\":1}");
 }
 
@@ -1707,11 +1756,16 @@ String handleSerialCommand(String line) {
   }
 
   if (upper.startsWith("PROGRESS ")) {
-    markAction();
     const int firstSpace = line.indexOf(' ', 9);
     String state = firstSpace < 0 ? line.substring(9) : line.substring(9, firstSpace);
     String msg = firstSpace < 0 ? "" : line.substring(firstSpace + 1);
-    if (setProgress(state, msg)) return "OK";
+    String normalized = state;
+    normalized.trim();
+    normalized.toUpperCase();
+    if (setProgress(normalized, msg)) {
+      if (normalized != PROGRESS_OFFLINE) markAction();
+      return "OK";
+    }
     return "ERR bad-state";
   }
 
@@ -1811,9 +1865,9 @@ void setup() {
   server.begin();
 
   delay(1800);
-  progressState = "IDLE";
-  progressMsg = "";
-  drawCodexIdleView();
+  progressState = PROGRESS_OFFLINE;
+  progressMsg = "codex-offline";
+  drawDefaultClawdView();
 }
 
 // ═════════════════════════════════════════════════════════════
@@ -1823,5 +1877,6 @@ void setup() {
 void loop() {
   server.handleClient();
   handleSerial();
+  checkCodexOfflineTimeout();
   progressTick();
 }

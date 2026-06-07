@@ -1,5 +1,5 @@
 param(
-  [ValidateSet("IDLE", "PLAN", "CODE", "TEST", "DONE", "BLOCK", "STATE")]
+  [ValidateSet("OFFLINE", "IDLE", "PLAN", "CODE", "TEST", "DONE", "BLOCK", "STATE")]
   [string]$State = "STATE",
   [string]$Message = "",
   [string]$DeviceUrl = "http://192.168.4.1",
