@@ -2,6 +2,8 @@
 
 本方案说明 Clawd Mochi 如何从客户端侧自动同步 Codex 状态。
 
+如果同时使用 Codex 和 Claude Code，多客户端场景只推荐使用统一入口 `tools/agent-watch.sh`。Claude Code 说明见 [Claude Code 状态同步说明](claude-code-status-sync.zh-CN.md)。
+
 目标不是让模型在每个阶段手动调用脚本，而是在用户电脑上启动一个 watcher、hook、wrapper 或定时任务，由客户端观察 Codex 的运行信号，再把状态推送到 Clawd Mochi 的 HTTP `/progress` 和 `/state` 接口。
 
 ## 目标
@@ -33,13 +35,16 @@
 
 ```text
 Codex 客户端
-  -> hook / notify / wrapper / watcher
-  -> tools/codex-stage.{sh,ps1}
-  -> http://设备IP/progress?state=...&msg=...
+Claude Code 客户端
+  -> Unified Agent Watcher
+  -> tools/codex-stage.sh
+  -> http://设备IP/progress?state=...&msg=...&source=...
   -> Clawd Mochi 屏幕
 ```
 
 `tools/codex-stage.sh` 和 `tools/codex-stage.ps1` 只负责把明确的状态推给设备。它们不负责判断 Codex 当前状态。
+
+`tools/agent-watch.sh` 是 WSL/Linux/macOS 下唯一推荐的多客户端用户入口。它同时观察 Codex 和 Claude Code，读取设备 Web 端 Display Mode，并只推送一个最终状态，避免两个单客户端 watcher 互相覆盖。
 
 ## 状态映射
 
@@ -63,35 +68,81 @@ Codex 客户端
 | --- | --- | --- |
 | `tools/codex-stage.sh` | WSL / Linux / macOS | 把指定状态推送到设备 HTTP 接口。 |
 | `tools/codex-stage.ps1` | Windows PowerShell | 把指定状态推送到设备，HTTP 不可用时回退 USB 串口。 |
-| `tools/codex-watch.sh` | WSL / Linux / macOS | 观察 Codex session JSONL 修改时间，自动推送 `OFFLINE / PLAN / CODE / DONE / IDLE`，并发送心跳。 |
+| `tools/agent-watch.sh` | WSL / Linux / macOS | 统一观察 Codex 和 Claude Code，根据 Web Display Mode 推送唯一最终状态。 |
+| `tools/codex-watch.sh` | WSL / Linux / macOS | 观察 Codex session JSONL 生命周期事件和修改时间，自动推送 `OFFLINE / PLAN / CODE / DONE / IDLE`，并发送心跳。 |
 | `tools/codex-watch.ps1` | Windows PowerShell | Windows 版 session watcher，逻辑同上。 |
 | `tools/codex-notify.ps1` | Windows PowerShell | Codex notify 回合结束入口，推送 `DONE turn-complete`。 |
 
-Watcher 第一版只使用 session 文件修改时间这个保守信号：
+`tools/codex-watch.*` 保留为单客户端兼容和排错工具。不要把 Codex watcher 和 Claude Code watcher 同时作为多客户端日常入口。
+
+## 多客户端统一入口
+
+WSL / Linux / macOS：
+
+```bash
+./tools/agent-watch.sh --device-url http://设备局域网IP --background
+./tools/agent-watch.sh --status
+./tools/agent-watch.sh --stop
+./tools/agent-watch.sh --once --mode auto --verbose
+```
+
+默认行为：
+
+- 观察 Codex：`~/.codex/sessions`。
+- 观察 Claude Code：`~/.claude/projects`。
+- 默认 `--mode device`，从设备 `/state.agentMode` 读取 Web 端 Display Mode。
+- `/state` 读取失败时使用上一次成功读取的模式；首次失败时使用 `AUTO`。
+- Auto 模式按 `BLOCK > TEST > CODE > PLAN > DONE > IDLE > OFFLINE` 排序，优先级相同再按最近活动时间打平，完全相同时 `Codex > Claude Code`。
+- 固定 `Codex` 或 `Claude` 模式严格遵守用户选择；对应客户端离线时回到默认 Clawd 动画，不自动切换到另一个客户端。
+- 默认每 60 秒重发当前最终状态，避免设备端 120 秒心跳超时。
+- 长运行 watcher 退出时推送 `OFFLINE agents-offline`；`--once` 退出不推离线状态。
+
+离线消息约定：
+
+- `codex-offline`
+- `claude-offline`
+- `agents-offline`
+- `codex-timeout`：设备端心跳超时原因。
+
+第一版限制：
+
+- 不提供 Windows 统一 watcher。
+- 不自动识别真实 `TEST` 或 `BLOCK`，只保留协议状态、优先级和转发能力。
+- Display Mode 不持久化，设备重启后回到 `AUTO`。
+
+Watcher 优先使用 Codex session JSONL 中的生命周期事件。若当前 session 包含 `task_started`、`user_message` 或 `task_complete`，则进入事件优先模式：
 
 - 没有 session：推送 `OFFLINE codex-offline`。
 - 发现新的近期 session：先推送 `PLAN codex-session`，不立即连续推送 `CODE`。
 - session 文件后续变化：保持或推送 `CODE active`。
-- 默认 20 秒无变化：推送 `DONE turn-complete`。
+- 发现最新回合的 `task_complete`：推送 `DONE turn-complete`。
+- Codex 仍在运行但 session 暂时没有写入时，不再仅因 20 秒静默切换到 `DONE`。
 - 默认 300 秒无变化：推送 `IDLE codex-ready`。
 - 默认每 60 秒重发当前有意义状态，避免设备端 120 秒心跳超时。
 - `BLOCK` 不被 `DONE` 或 `IDLE` 计时器自动覆盖，只能由明确新状态或设备离线超时替换。
 - 长期运行 watcher 退出时推送 `OFFLINE codex-offline`；`--once` / `-Once` 诊断模式退出时不发送 `OFFLINE`。
 
-这不是 Codex 内部阶段的精确事件流，而是客户端侧自动同步的可用基线。后续如果 Codex 暴露正式 hook 或状态 API，应优先替换这套启发式判断。
+如果 session 没有这些生命周期事件，watcher 会回退到修改时间启发式：默认 20 秒无变化推送 `DONE turn-complete`，300 秒无变化推送 `IDLE codex-ready`。这不是 Codex 内部阶段的完整事件流，而是客户端侧自动同步的可用基线。后续如果 Codex 暴露正式 hook 或状态 API，应优先替换剩余启发式判断。
 
 ## Windows 接入
 
 Windows 可以直接启动 watcher：
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\tools\codex-watch.ps1
+powershell -ExecutionPolicy Bypass -File .\tools\codex-watch.ps1 -Background
 ```
 
 如果设备已经连入局域网，可以传入设备 IP：
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\tools\codex-watch.ps1 -DeviceUrl http://设备局域网IP
+powershell -ExecutionPolicy Bypass -File .\tools\codex-watch.ps1 -DeviceUrl http://设备局域网IP -Background
+```
+
+查看或停止后台 watcher：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\tools\codex-watch.ps1 -Status
+powershell -ExecutionPolicy Bypass -File .\tools\codex-watch.ps1 -Stop
 ```
 
 也可以继续使用 `tools/codex-notify.ps1` 作为 Codex notify 的回合结束入口：
@@ -109,16 +160,23 @@ Arguments: -ExecutionPolicy Bypass -File D:\codespace\clawd-mochi\tools\codex-wa
 
 ## macOS / Linux / WSL 接入
 
-WSL / Linux / macOS 可以直接启动 watcher：
+WSL / Linux / macOS 如果只排查 Codex 单客户端，可以直接启动兼容 watcher：
 
 ```bash
-./tools/codex-watch.sh
+./tools/codex-watch.sh --background
 ```
 
 设备已经连入局域网时：
 
 ```bash
-./tools/codex-watch.sh --device-url http://设备局域网IP
+./tools/codex-watch.sh --device-url http://设备局域网IP --background
+```
+
+查看或停止后台 watcher：
+
+```bash
+./tools/codex-watch.sh --status
+./tools/codex-watch.sh --stop
 ```
 
 调试时运行一次：
@@ -132,6 +190,8 @@ WSL / Linux / macOS 可以直接启动 watcher：
 ```bash
 ./tools/codex-watch.sh --interval 2 --done-after 20 --idle-after 300 --heartbeat 60
 ```
+
+`--background` 默认 pid 文件为 `$XDG_RUNTIME_DIR/clawd-mochi-codex-watch.pid` 或 `/tmp/clawd-mochi-codex-watch.pid`，日志文件为 `$XDG_STATE_HOME/clawd-mochi/codex-watch.log` 或 `~/.local/state/clawd-mochi/codex-watch.log`。需要固定路径时可传入 `--pid-file` 和 `--log-file`。
 
 macOS 可用 `launchd` 常驻 watcher，Linux 可用 `systemd --user` 或 cron，WSL 可由登录 shell、Windows Terminal 启动脚本，或 Windows 任务计划程序拉起。
 
@@ -156,8 +216,8 @@ WantedBy=default.target
 第一阶段先做可靠但保守的同步：
 
 - Codex 启动时推 `PLAN codex-started`。
-- session 文件或日志在短时间内持续变化时推 `CODE active`。
-- Codex notify 或 watcher 发现回合结束时推 `DONE turn-complete`。
+- session 文件或日志在短时间内持续变化且未完成时推 `CODE active`。
+- Codex session 中出现最新 `task_complete`，或 Codex notify 明确通知回合结束时，推 `DONE turn-complete`。
 - 超过一段时间无变化但 session 仍有效时推 `IDLE codex-ready`。
 - 没有 session、watcher 停止或客户端明确离线时推 `OFFLINE codex-offline`。
 

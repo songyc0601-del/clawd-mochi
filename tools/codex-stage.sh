@@ -3,12 +3,13 @@ set -euo pipefail
 
 STATE="${STATE:-STATE}"
 MSG="${MESSAGE:-}"
+SOURCE="${SOURCE:-}"
 DEVICE_URL="${DEVICE_URL:-http://192.168.4.1}"
 
 usage() {
   cat <<'EOF'
 Usage:
-  tools/codex-stage.sh [-State STATE] [-Message MESSAGE] [-DeviceUrl URL]
+  tools/codex-stage.sh [-State STATE] [-Message MESSAGE] [-Source SOURCE] [-DeviceUrl URL]
   tools/codex-stage.sh STATE [MESSAGE]
 
 States: OFFLINE, IDLE, PLAN, CODE, TEST, DONE, BLOCK, STATE
@@ -23,6 +24,10 @@ while [ "$#" -gt 0 ]; do
       ;;
     -Message|--message|-Msg|--msg)
       MSG="${2:-}"
+      shift 2
+      ;;
+    -Source|--source)
+      SOURCE="${2:-}"
       shift 2
       ;;
     -DeviceUrl|--device-url|--url)
@@ -56,8 +61,9 @@ clean_msg="$(printf "%s" "$MSG" | tr -cd '\11\12\15\40-\176' | sed 's/^ *//;s/ *
 if [ "$STATE" = "STATE" ]; then
   curl --noproxy "*" -fsS --max-time 2 "$DEVICE_URL/state"
 else
-  curl --noproxy "*" -fsS --max-time 2 \
-    --get "$DEVICE_URL/progress" \
-    --data-urlencode "state=$STATE" \
-    --data-urlencode "msg=$clean_msg"
+  args=(--noproxy "*" -fsS --max-time 2 --get "$DEVICE_URL/progress" --data-urlencode "state=$STATE" --data-urlencode "msg=$clean_msg")
+  if [ -n "$SOURCE" ]; then
+    args+=(--data-urlencode "source=$SOURCE")
+  fi
+  curl "${args[@]}"
 fi
