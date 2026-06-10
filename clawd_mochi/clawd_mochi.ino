@@ -1053,87 +1053,6 @@ void routeCmd() {
   }
 }
 
-void routeChar() {
-  if (!termMode) { server.send(200, "application/json", "{\"ok\":1}"); return; }
-  const String val = server.arg("c");
-  if (val.length() > 0) termAddChar(val[0]);
-  server.send(200, "application/json", "{\"ok\":1}");
-}
-
-void routeSpeed() {
-  markAction();
-  if (server.hasArg("v")) animSpeed = constrain(server.arg("v").toInt(), 1, 3);
-  server.send(200, "application/json", "{\"ok\":1}");
-}
-
-// /redraw?bg=hex — set animBg and immediately redraw current view
-void routeRedraw() {
-  markAction();
-  if (server.hasArg("bg")) {
-    animBgColor = hexToRgb565(server.arg("bg"));
-    drawBgColor = animBgColor;
-  }
-  switch (currentView) {
-    case VIEW_EYES_NORMAL: drawNormalEyes(); break;
-    case VIEW_EYES_SQUISH: drawSquishEyes(); break;
-    case VIEW_CODE:        drawCodeView();   break;
-    case VIEW_DRAW:        tft.fillScreen(drawBgColor); break;
-    case VIEW_PROGRESS:    drawProgressView(); break;
-  }
-  server.send(200, "application/json", "{\"ok\":1}");
-}
-
-void routeCanvas() {
-  markAction();
-  const bool on = server.hasArg("on") && server.arg("on") == "1";
-  if (on) { currentView = VIEW_DRAW; tft.fillScreen(drawBgColor); }
-  server.send(200, "application/json", "{\"ok\":1}");
-}
-
-void routeDrawClear() {
-  markAction();
-  const String bg = server.hasArg("bg") ? server.arg("bg") : "#aa4818";
-  drawBgColor = hexToRgb565(bg);
-  animBgColor = drawBgColor;  // keep in sync
-  currentView = VIEW_DRAW; termMode = false;
-  tft.fillScreen(drawBgColor);
-  server.send(200, "application/json", "{\"ok\":1}");
-}
-
-void routeDrawStroke() {
-  markAction();
-  if (!server.hasArg("pts") || !server.hasArg("pen")) {
-    server.send(200, "application/json", "{\"ok\":1}"); return;
-  }
-  const uint16_t color = hexToRgb565(server.arg("pen"));
-  const String   data  = server.arg("pts");
-  currentView = VIEW_DRAW;
-
-  struct Pt { int16_t x, y; };
-  Pt prev = {-1, -1};
-  int start = 0;
-  while (start < (int)data.length()) {
-    int semi = data.indexOf(';', start);
-    if (semi == -1) semi = data.length();
-    String entry = data.substring(start, semi);
-    const int comma = entry.indexOf(',');
-    if (comma > 0) {
-      const int16_t x = entry.substring(0, comma).toInt();
-      const int16_t y = entry.substring(comma + 1).toInt();
-      if (prev.x >= 0) {
-        tft.drawLine(prev.x, prev.y, x, y, color);
-        tft.drawLine(prev.x + 1, prev.y, x + 1, y, color);
-        tft.drawLine(prev.x, prev.y + 1, x, y + 1, color);
-      } else {
-        tft.fillCircle(x, y, 2, color);
-      }
-      prev = {x, y};
-    }
-    start = semi + 1;
-  }
-  server.send(200, "application/json", "{\"ok\":1}");
-}
-
 void routeBacklight() {
   markAction();
   setBacklight(server.hasArg("on") && server.arg("on") == "1");
@@ -1183,12 +1102,6 @@ void routeExpr() {
     server.send(400, "application/json", "{\"e\":1}");
     return;
   }
-  server.send(200, "application/json", "{\"ok\":1}");
-}
-
-void routeIdle() {
-  markAction();
-  if (server.hasArg("on")) idleEnabled = server.arg("on") == "1";
   server.send(200, "application/json", "{\"ok\":1}");
 }
 
