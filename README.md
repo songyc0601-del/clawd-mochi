@@ -5,7 +5,7 @@
 
 # Clawd Mochi 🦀🤖
 
-A physical desk companion inspired by **Clawd** — the pixel-crab mascot of Claude Code by Anthropic. An ESP32-C3 drives a 1.54" color TFT display and hosts a mobile web controller — no app, no internet, no cloud required.
+A physical desk companion inspired by **Clawd** — the pixel-crab mascot of Claude Code by Anthropic. An ESP32-C3 drives a 1.54" color TFT display and hosts a mobile web controller, USB serial controls, Codex / Claude Code progress display, and browser-based OTA updates — no app, internet, or cloud required.
 
 **Cost: ~$6–8 · Build time: ~1 hour · Skill level: Beginner**
 
@@ -25,12 +25,12 @@ A physical desk companion inspired by **Clawd** — the pixel-crab mascot of Cla
 
 ## What it does
 
-Clawd Mochi sits on your desk and shows animated expressions on a small color display. You control it from any phone or browser by connecting to its built-in WiFi hotspot:
+Clawd Mochi sits on your desk and shows animated expressions or your current Codex / Claude Code work phase on a small color display. You control it from any phone or browser through its built-in WiFi hotspot or, after setup, through your normal 2.4 GHz LAN:
 
-- **Normal eyes** — pixel-art square eyes with wiggle and blink animations
-- **Squish eyes** — `> <` happy squint with open/close animation
-- **Claude Code** — displays "Claude Code" with an interactive terminal
-- **Canvas** — draw anything on the display from your phone in real time
+- **Companion expressions** — normal, focus, and happy eyes
+- **Codex / Claude Code work status** — IDLE, PLAN, CODE, TEST, DONE, and BLOCK phases
+- **Web controller** — screen controls, backlight toggle, network settings, and OTA upload
+- **USB serial automation** — push state from scripts when WiFi is unavailable
 
 ---
 
@@ -98,7 +98,7 @@ Go to **Tools** and set:
 | Board           | ESP32C3 Dev Module      |
 | USB CDC On Boot | **Enabled** ← important |
 | CPU Frequency   | 160 MHz                 |
-| Upload Speed    | 921600                  |
+| Upload Speed    | 115200                  |
 
 ### Step 5 — Upload the sketch
 
@@ -113,13 +113,21 @@ Go to **Tools** and set:
 
 ## How to use it
 
-### Connect and open the controller
+### First-time network setup
 
 1. Power the ESP32 via USB-C (any USB charger or power bank)
 2. Wait ~3 seconds for the boot animation to finish
-3. On your phone or computer, go to **WiFi settings**
+3. On your phone, go to **WiFi settings**
 4. Connect to the network: **`ClaWD-Mochi`** · password: **`clawd1234`**
 5. Open a browser and go to **`http://192.168.4.1`**
+6. Open **Network settings**, choose a 2.4 GHz WiFi network, enter the password, and save
+7. After connection, use the LAN IP shown on the screen or network page
+
+ESP32-C3 only supports 2.4 GHz WiFi. The `ClaWD-Mochi` hotspot always stays available for recovery and reconfiguration at `http://192.168.4.1/network`.
+
+### Daily use
+
+Your computer or phone can stay on its normal WiFi. Open the LAN IP shown on the device to use the controller or OTA page.
 
 You should see the web controller:
 
@@ -129,15 +137,99 @@ You should see the web controller:
 
 | Button / control   | What it does                                    |
 | ------------------ | ----------------------------------------------- |
-| Normal eyes        | Plays wiggle + blink animation                  |
-| Squish eyes        | Plays open/close animation                      |
-| Claude Code        | Shows code display, opens terminal              |
-| Canvas             | Enter drawing mode — draw on display from phone |
-| Speed slider       | Controls animation speed (slow / normal / fast) |
-| Background color   | Changes background color of all views           |
-| Pen color          | Sets drawing color for canvas                   |
-| Display on/off     | Toggles the backlight                           |
-| ✓ done (in canvas) | Exits canvas mode                               |
+| Normal             | Shows the default Clawd eyes                    |
+| Focus              | Shows the focus expression                      |
+| Happy              | Shows the happy expression                      |
+| Backlight          | Toggles the display backlight                   |
+| Network settings   | Joins or clears a saved 2.4 GHz WiFi network   |
+| OTA update         | Uploads a compiled ESP32-C3 `.bin` firmware     |
+| Refresh status     | Reloads the current device and Codex state      |
+
+The work-status panel is read-only for phases. The Web UI can switch Display Mode between Auto, Codex, and Claude; the local watcher pushes the final phase update to the device.
+
+### Codex / Claude Code status display
+
+The firmware accepts these work status states:
+
+| Phase | Meaning |
+| --- | --- |
+| OFFLINE | The client is offline; return to the default Clawd animation |
+| IDLE | The client is online and ready, with no active task |
+| PLAN | Planning, stage 1/4 |
+| CODE | Working, stage 2/4 |
+| TEST | Verifying, stage 3/4 |
+| DONE | Complete, stage 4/4 |
+| BLOCK | Waiting for required input, red full-stage display |
+
+`OFFLINE` is not a work phase. It is used when the selected client is not open, the watcher is not running, or the device-side heartbeat times out. Codex states use the Codex core-pulse layer; Claude Code states use the Claude Code Style Layer.
+
+Display Mode:
+
+- `Auto`: selects by status importance first, then by most recent activity.
+- `Codex`: only Codex can drive the work-status layer.
+- `Claude`: only Claude Code can drive the work-status layer.
+
+The Auto priority is `BLOCK > TEST > CODE > PLAN > DONE > IDLE > OFFLINE`. Display Mode is runtime-only and resets to `AUTO` after reboot.
+
+The Codex watcher prefers JSONL lifecycle events: it switches to `DONE` when the latest turn writes `task_complete`. If a source has no lifecycle events, the watcher falls back to the older mtime heuristic.
+
+From Windows PowerShell:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\tools\codex-stage.ps1 -State CODE -Message editing
+powershell -ExecutionPolicy Bypass -File .\tools\codex-stage.ps1 -State TEST -Message verifying
+powershell -ExecutionPolicy Bypass -File .\tools\codex-stage.ps1 -State OFFLINE -Message codex-offline
+```
+
+`tools/codex-stage.ps1` tries WiFi HTTP first and falls back to `COM7` USB serial. For a LAN-connected device, pass `-DeviceUrl http://device-lan-ip`.
+
+On WSL / Linux / macOS, run the unified watcher:
+
+```bash
+./tools/agent-watch.sh --device-url http://device-lan-ip --background
+./tools/agent-watch.sh --status
+./tools/agent-watch.sh --stop
+./tools/agent-watch.sh --once --mode auto --verbose
+```
+
+`agent-watch.sh` observes Codex at `~/.codex/sessions` and Claude Code at `~/.claude/projects` by default. The older single-client watchers remain available for compatibility and troubleshooting, but do not run the Codex and Claude single-client watchers together against the same device for multi-client display.
+
+Protocol smoke test:
+
+```bash
+curl "http://device-lan-ip/agent-mode?mode=auto"
+curl "http://device-lan-ip/state"
+curl "http://device-lan-ip/progress?state=OFFLINE&msg=agents-offline&source=none"
+```
+
+Manual USB serial commands use 115200 baud:
+
+```text
+STATE
+CMD normal
+BL 0
+BL 1
+PROGRESS PLAN planning
+PROGRESS CODE editing
+PROGRESS TEST verifying
+PROGRESS DONE complete
+PROGRESS BLOCK need-input
+PROGRESS IDLE
+PROGRESS OFFLINE codex-offline
+```
+
+`STATE` returns one line of JSON.
+
+### OTA updates
+
+The first flash still requires USB. After that, upload an ESP32-C3 `.bin` firmware from:
+
+```text
+http://device-lan-ip/ota
+http://192.168.4.1/ota
+```
+
+See [OTA update guide](docs/ota-update.zh-CN.md) and [USB / Codex serial guide](docs/usb-serial-codex.zh-CN.md) for the current operational details.
 
 ---
 
@@ -224,7 +316,6 @@ Contributions are very welcome! Here are some ideas:
 - **New views** — weather display, clock, notification badges, pixel art scenes
 - **Sound** — add a small buzzer for sound effects
 - **Sensors** — connect a touch sensor or button for physical interaction
-- **OTA updates** — add over-the-air firmware updates
 - **MQTT / Home Assistant** — connect to smart home platforms
 
 To contribute: fork the repo, make your changes, and open a pull request. Please keep the single-file structure (`clawd_mochi.ino`) so it stays easy for beginners to flash.

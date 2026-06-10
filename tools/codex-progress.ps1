@@ -1,6 +1,6 @@
 param(
   [string]$Port = "COM7",
-  [ValidateSet("IDLE", "PLAN", "CODE", "TEST", "DONE", "BLOCK", "STATE")]
+  [ValidateSet("OFFLINE", "IDLE", "PLAN", "CODE", "TEST", "DONE", "BLOCK", "STATE")]
   [string]$State = "STATE",
   [string]$Message = "",
   [int]$BaudRate = 115200,
