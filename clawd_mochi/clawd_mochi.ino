@@ -1019,22 +1019,6 @@ void showNormal() {
   animNormalEyes();
 }
 
-void showSquish() {
-  markAction();
-  termMode = false;
-  currentView = VIEW_EYES_SQUISH;
-  animSquishEyes();
-}
-
-void showCodeTerminal() {
-  markAction();
-  currentView = VIEW_CODE;
-  drawCodeView();
-  termMode = true;
-  termClear();
-  termFullRedraw();
-}
-
 bool runNamedCommand(String name) {
   name.trim();
   name.toLowerCase();
