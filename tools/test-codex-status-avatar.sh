@@ -3,12 +3,11 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 FW="$ROOT/clawd_mochi/clawd_mochi.ino"
-DIST="$ROOT/dist/clawd_mochi/clawd_mochi.ino"
 STAGE_SH="$ROOT/tools/codex-stage.sh"
 WATCH_SH="$ROOT/tools/codex-watch.sh"
 AGENT_SH="$ROOT/tools/agent-watch.sh"
 
-for file in "$FW" "$DIST" "$STAGE_SH" "$WATCH_SH" "$AGENT_SH"; do
+for file in "$FW" "$STAGE_SH" "$WATCH_SH" "$AGENT_SH"; do
   if [ ! -f "$file" ]; then
     echo "Missing required file: $file" >&2
     exit 1
@@ -55,10 +54,6 @@ required_fw=(
 for text in "${required_fw[@]}"; do
   if ! grep -Fq -- "$text" "$FW"; then
     echo "Firmware missing Codex status avatar contract: $text" >&2
-    exit 1
-  fi
-  if ! grep -Fq -- "$text" "$DIST"; then
-    echo "Dist firmware missing Codex status avatar contract: $text" >&2
     exit 1
   fi
 done
@@ -117,10 +112,5 @@ for text in "${required_agent_watch[@]}"; do
     exit 1
   fi
 done
-
-if ! cmp -s "$FW" "$DIST"; then
-  echo "clawd_mochi and dist firmware must stay identical" >&2
-  exit 1
-fi
 
 echo "Codex status avatar contract passed"

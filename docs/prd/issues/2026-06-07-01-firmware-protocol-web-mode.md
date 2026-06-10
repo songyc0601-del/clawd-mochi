@@ -20,8 +20,8 @@ Reference PRD: `docs/prd/2026-06-07-agent-display-mode.zh-CN.md`
 - [ ] Web home Work Status area includes the `Auto / Codex / Claude` mode control.
 - [ ] Web mode switch updates Display Mode only; it does not directly push `/progress`.
 - [ ] Display Mode is not persisted across reboot and defaults to `AUTO`.
-- [ ] Firmware source and distributed firmware mirror remain identical.
-- [ ] Static contract tests cover source, agent mode, Web field, and firmware mirror behavior.
+- [ ] Firmware source is maintained only in `clawd_mochi/clawd_mochi.ino`; the historical distributed firmware mirror has been removed.
+- [ ] Static contract tests cover source, agent mode, and Web field behavior in the main sketch.
 
 ## Blocked by
 
@@ -35,4 +35,3 @@ None - can start immediately.
 - Do not implement Windows Unified Agent Watcher.
 - Do not auto-detect `TEST` or `BLOCK`.
 - Do not persist Display Mode.
-

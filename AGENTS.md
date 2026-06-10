@@ -14,6 +14,7 @@ ESP32-C3 + 1.54" ST7789 桌面状态形象屏。
 
 ## 代码结构
 - 主代码: `clawd_mochi/clawd_mochi.ino`（单文件，约 85KB）
+- 不再保留 `dist/clawd_mochi/clawd_mochi.ino` 固件副本；不要维护 dist 与主 sketch 的镜像同步
 - 工具脚本: `tools/`（Windows PowerShell，**Linux 不要执行**）
 - 文档: `docs/`（中英文混合）
 - 设计稿存档: `.superpowers/brainstorm/`（不要修改）

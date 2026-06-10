@@ -16,7 +16,6 @@
 ├── README.md
 ├── README.zh-CN.md
 ├── clawd_mochi/clawd_mochi.ino
-├── dist/clawd_mochi/clawd_mochi.ino
 ├── docs/
 │   ├── adr/0001-client-side-agent-status-arbitration.md
 │   ├── claude-code-status-sync.zh-CN.md
@@ -56,7 +55,7 @@
 | 文件 | 用途 | 分类 | 依据 |
 |---|---|---|---|
 | `clawd_mochi/clawd_mochi.ino` | 主 Arduino sketch，包含显示、WiFi、HTTP、串口、OTA 逻辑 | 运行必需 | `AGENTS.md` 指定主代码；本次审计对象，1992 行 |
-| `dist/clawd_mochi/clawd_mochi.ino` | 发布/拷贝用 sketch 副本 | 疑似废弃 | 与主文件同名且不在 Arduino 默认 sketch 目录；`AGENTS.md` 指定主代码为 `clawd_mochi/clawd_mochi.ino`，未提到 `dist/`；最近相关提交 `1938073 2026-06-07 实现多客户端状态显示模式` |
+| `dist/clawd_mochi/clawd_mochi.ino` | 已删除的历史 sketch 副本 | 不再维护 | 主 sketch 固定为 `clawd_mochi/clawd_mochi.ino`；不再要求维护 dist 与主 sketch 的镜像一致性 |
 
 ## 文档
 
@@ -108,9 +107,9 @@
 
 | 文件/目录 | 依据 |
 |---|---|
-| `dist/clawd_mochi/clawd_mochi.ino` | 主入口已由 `AGENTS.md` 固定为 `clawd_mochi/clawd_mochi.ino`；`dist/` 副本容易与主文件漂移，未见文档说明如何生成 |
+| `dist/clawd_mochi/clawd_mochi.ino` | 已删除；主入口固定为 `clawd_mochi/clawd_mochi.ino`，不再维护 dist 镜像副本 |
 | `.superpowers/brainstorm/web-ui-20260605/state/launcher.pid` | 运行时状态文件，被 Git 跟踪；文件名语义为进程状态，不应是固件运行必需 |
 | `.superpowers/brainstorm/web-ui-20260605/state/server-stopped` | 同上，是设计原型服务的停止标记 |
 | `mintty.2026-06-06_10-58-10.png` | 截图文件名带时间戳；未见代码/文档引用 |
 
-本清单不建议在本 issue 中删除任何文件；删除前应单独确认 `dist/` 是否仍作为发布包来源、`.superpowers` 是否需要保留完整设计历史。
+本清单不建议在本 issue 中删除其他文件；`.superpowers` 是否需要保留完整设计历史应单独确认。

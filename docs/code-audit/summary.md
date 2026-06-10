@@ -20,7 +20,7 @@
 2. 清理旧 HTML 大字符串：`INDEX_HTML` L799 与 `INDEX_HTML_CLEAN` L1308 未被 `server.send*_P` 引用，当前首页使用 `INDEX_HTML_LITE` L1407。
 3. 明确闲置动画策略：`idleTick()` L383-L403 未被 `loop()` L1987-L1992 调用，导致 `idleEnabled` L81、`lastIdleMs` L84 基本失效。
 4. 收敛命令分发：`runNamedCommand()` L1646-L1651 只接受 `normal/w`，但旧前端仍尝试 `s/d/q` 等路径，`showSquish()` L1630-L1635 与 `showCodeTerminal()` L1637-L1644 因此不可达。
-5. 确认发布副本策略：`dist/clawd_mochi/clawd_mochi.ino` 是主 sketch 的副本，但 `AGENTS.md` 指定主代码为 `clawd_mochi/clawd_mochi.ino`；如果继续保留，需要说明生成/同步流程，否则容易漂移。
+5. 发布副本策略已收敛：`clawd_mochi/clawd_mochi.ino` 是唯一主 sketch；历史副本 `dist/clawd_mochi/clawd_mochi.ino` 已删除，不再要求维护 dist 与主 sketch 的镜像一致性。
 
 ## 本次审计产物
 
