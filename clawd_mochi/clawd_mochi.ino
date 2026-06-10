@@ -78,10 +78,8 @@ uint8_t  currentView  = VIEW_EYES_NORMAL;
 bool     busy         = false;
 bool     backlightOn  = true;
 uint8_t  animSpeed    = 1;   // 1=slow(default) 2=normal 3=fast
-bool     idleEnabled  = true;
 uint8_t  companionExpr = EXPR_FOCUS;
 uint32_t lastActionMs = 0;
-uint32_t lastIdleMs   = 0;
 uint32_t lastProgressBlinkMs = 0;
 bool     progressBlinkOn = true;
 
@@ -328,7 +326,7 @@ void drawSquishEyes(bool closed = false) {
   }
 }
 
-void drawCompanionEyes(uint8_t expr, int16_t ox = 0, bool idle = false) {
+void drawCompanionEyes(uint8_t expr, int16_t ox = 0) {
   tft.fillScreen(animBgColor);
   const int16_t lx = eyeLX(ox), rx = eyeRX(ox), ey = eyeY();
   const int16_t cy = eyeCY();
@@ -343,7 +341,6 @@ void drawCompanionEyes(uint8_t expr, int16_t ox = 0, bool idle = false) {
       tft.fillRect(rx, cy - 2, EYE_W, 5, C_BLACK);
       tft.setTextColor(C_BLACK); tft.setTextSize(2);
       tft.setCursor(176, 48); tft.print("Z");
-      if (idle) { tft.setTextSize(1); tft.setCursor(202, 32); tft.print("z"); }
       break;
     case EXPR_STARE:
       tft.fillRect(lx - 4, ey - 4, EYE_W + 8, EYE_H + 8, C_BLACK);
@@ -360,10 +357,6 @@ void drawCompanionEyes(uint8_t expr, int16_t ox = 0, bool idle = false) {
     default:
       tft.fillRect(lx, ey, EYE_W, EYE_H, C_BLACK);
       tft.fillRect(rx, ey, EYE_W, EYE_H, C_BLACK);
-      if (idle) {
-        tft.fillRect(lx, ey + EYE_H / 2 - 3, EYE_W, 6, animBgColor);
-        tft.fillRect(rx, ey + EYE_H / 2 - 3, EYE_W, 6, animBgColor);
-      }
       break;
   }
 }
@@ -378,28 +371,6 @@ bool setCompanionExpr(String name) {
   currentView = VIEW_COMPANION;
   drawCompanionEyes(companionExpr);
   return true;
-}
-
-void idleTick() {
-  if (!idleEnabled || busy || termMode || currentView == VIEW_DRAW) return;
-  if (currentView != VIEW_COMPANION && currentView != VIEW_EYES_NORMAL &&
-      currentView != VIEW_EYES_SQUISH) return;
-  const uint32_t now = millis();
-  if (now - lastActionMs < 8000 || now - lastIdleMs < 8000) return;
-  lastIdleMs = now;
-  if (currentView == VIEW_COMPANION) {
-    drawCompanionEyes(companionExpr, 0, true);
-    delay(speedMs(120));
-    drawCompanionEyes(companionExpr);
-  } else if (currentView == VIEW_EYES_NORMAL) {
-    drawNormalEyes(0, true);
-    delay(speedMs(120));
-    drawNormalEyes();
-  } else if (currentView == VIEW_EYES_SQUISH) {
-    drawSquishEyes(true);
-    delay(speedMs(120));
-    drawSquishEyes(false);
-  }
 }
 
 void drawCodeView() {
