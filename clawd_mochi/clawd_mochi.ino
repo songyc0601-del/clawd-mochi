@@ -88,12 +88,27 @@ const String PROGRESS_TEST    = "TEST";
 const String PROGRESS_DONE    = "DONE";
 const String PROGRESS_BLOCK   = "BLOCK";
 
-String   progressState = PROGRESS_OFFLINE;
-String   progressMsg   = "";
-String   progressSource = "none";
-String   agentMode = "AUTO";
+const String MODE_AUTO   = "AUTO";
+const String MODE_CODEX  = "CODEX";
+const String MODE_CLAUDE = "CLAUDE";
+
+struct DisplayState {
+  String state;
+  String msg;
+  String source;
+  unsigned long lastMs;
+};
+
+String   codexState = PROGRESS_OFFLINE;
+String   codexMsg   = "";
+unsigned long codexLastMs = 0;
+
+String   claudeState = PROGRESS_OFFLINE;
+String   claudeMsg   = "";
+unsigned long claudeLastMs = 0;
+
+String   agentMode = MODE_AUTO;
 uint8_t  progressPulsePhase = 0;
-uint32_t lastCodexProgressMs = 0;
 
 const uint32_t CODEX_OFFLINE_TIMEOUT_MS = 120000UL;
 String   serialLine    = "";
@@ -353,9 +368,42 @@ bool isProgressState(const String& state) {
 bool setAgentMode(String mode) {
   mode.trim();
   mode.toUpperCase();
-  if (mode != "AUTO" && mode != "CODEX" && mode != "CLAUDE") return false;
+  if (mode != MODE_AUTO && mode != MODE_CODEX && mode != MODE_CLAUDE) return false;
   agentMode = mode;
   return true;
+}
+
+uint8_t progressPriority(const String& state) {
+  if (state == PROGRESS_BLOCK)   return 6;
+  if (state == PROGRESS_DONE)    return 5;
+  if (state == PROGRESS_TEST)    return 4;
+  if (state == PROGRESS_CODE)    return 3;
+  if (state == PROGRESS_PLAN)    return 2;
+  if (state == PROGRESS_IDLE)    return 1;
+  if (state == PROGRESS_OFFLINE) return 0;
+  return 0;
+}
+
+DisplayState displayFromSource(const String& source) {
+  if (source == "claude") return {claudeState, claudeMsg, "claude", claudeLastMs};
+  return {codexState, codexMsg, "codex", codexLastMs};
+}
+
+String implicitProgressSource() {
+  if (agentMode == MODE_CLAUDE) return "claude";
+  return "codex";
+}
+
+DisplayState chooseDisplay() {
+  if (agentMode == MODE_CODEX) return displayFromSource("codex");
+  if (agentMode == MODE_CLAUDE) return displayFromSource("claude");
+
+  const uint8_t codexPriority = progressPriority(codexState);
+  const uint8_t claudePriority = progressPriority(claudeState);
+  if (claudePriority > codexPriority) return displayFromSource("claude");
+  if (codexPriority > claudePriority) return displayFromSource("codex");
+  if (claudeLastMs > codexLastMs) return displayFromSource("claude");
+  return displayFromSource("codex");
 }
 
 uint8_t progressStage(const String& state) {
@@ -368,8 +416,8 @@ uint8_t progressStage(const String& state) {
 }
 
 String progressDefaultMessage(const String& state) {
-  if (state == PROGRESS_OFFLINE) return "codex-offline";
-  if (state == PROGRESS_IDLE)  return "codex-ready";
+  if (state == PROGRESS_OFFLINE) return "source-offline";
+  if (state == PROGRESS_IDLE)  return "source-ready";
   if (state == PROGRESS_PLAN)  return "planning";
   if (state == PROGRESS_CODE)  return "active";
   if (state == PROGRESS_TEST)  return "verifying";
@@ -432,11 +480,11 @@ void drawClaudeCodeStyleLayer(uint16_t col, uint8_t pulse) {
   tft.fillCircle(cx, cy, 9 + (phase / 2), C_WHITE);
 }
 
-void drawCodexProgressView() {
+void drawCodexProgressView(const DisplayState& display) {
   currentView = VIEW_PROGRESS;
-  const uint16_t col = progressColor(progressState);
-  const uint8_t stage = progressStage(progressState);
-  String message = progressMsg.length() > 0 ? progressMsg : progressDefaultMessage(progressState);
+  const uint16_t col = progressColor(display.state);
+  const uint8_t stage = progressStage(display.state);
+  String message = display.msg.length() > 0 ? display.msg : progressDefaultMessage(display.state);
   tft.fillScreen(C_DARKBG);
   tft.fillRect(0, 0, DISP_W, 6, col);
   tft.fillRect(0, DISP_H - 6, DISP_W, 6, col);
@@ -447,14 +495,14 @@ void drawCodexProgressView() {
 
   // Codex core-pulse status layer.
   drawCodexCore(col, progressPulsePhase);
-  if (progressState == PROGRESS_TEST) drawCodexScanLine(col, progressPulsePhase);
+  if (display.state == PROGRESS_TEST) drawCodexScanLine(col, progressPulsePhase);
 
-  drawProgressBars(stage, progressState == PROGRESS_BLOCK ? progressColor(PROGRESS_BLOCK) : col);
+  drawProgressBars(stage, display.state == PROGRESS_BLOCK ? progressColor(PROGRESS_BLOCK) : col);
 
   tft.setTextColor(col); tft.setTextSize(4);
-  int16_t x = (DISP_W - progressState.length() * 24) / 2;
+  int16_t x = (DISP_W - display.state.length() * 24) / 2;
   if (x < 0) x = 0;
-  tft.setCursor(x, 172); tft.print(progressState);
+  tft.setCursor(x, 172); tft.print(display.state);
 
   if (message.length() > 0) {
     tft.setTextColor(C_WHITE); tft.setTextSize(1);
@@ -464,11 +512,11 @@ void drawCodexProgressView() {
   }
 }
 
-void drawClaudeProgressView() {
+void drawClaudeProgressView(const DisplayState& display) {
   currentView = VIEW_PROGRESS;
-  const uint16_t col = progressColor(progressState);
-  const uint8_t stage = progressStage(progressState);
-  String message = progressMsg.length() > 0 ? progressMsg : progressDefaultMessage(progressState);
+  const uint16_t col = progressColor(display.state);
+  const uint8_t stage = progressStage(display.state);
+  String message = display.msg.length() > 0 ? display.msg : progressDefaultMessage(display.state);
   tft.fillScreen(C_DARKBG);
   tft.fillRect(0, 0, DISP_W, 6, col);
   tft.fillRect(0, DISP_H - 6, DISP_W, 6, col);
@@ -477,13 +525,13 @@ void drawClaudeProgressView() {
   tft.setCursor(12, 18); tft.print("CLAUDE");
   tft.fillCircle(222, 21, 4, col);
 
-  drawClaudeCodeStyleLayer(col, progressState == PROGRESS_DONE ? 1 : progressPulsePhase);
-  drawProgressBars(stage, progressState == PROGRESS_BLOCK ? progressColor(PROGRESS_BLOCK) : col);
+  drawClaudeCodeStyleLayer(col, display.state == PROGRESS_DONE ? 1 : progressPulsePhase);
+  drawProgressBars(stage, display.state == PROGRESS_BLOCK ? progressColor(PROGRESS_BLOCK) : col);
 
   tft.setTextColor(col); tft.setTextSize(4);
-  int16_t x = (DISP_W - progressState.length() * 24) / 2;
+  int16_t x = (DISP_W - display.state.length() * 24) / 2;
   if (x < 0) x = 0;
-  tft.setCursor(x, 172); tft.print(progressState);
+  tft.setCursor(x, 172); tft.print(display.state);
 
   if (message.length() > 0) {
     tft.setTextColor(C_WHITE); tft.setTextSize(1);
@@ -499,53 +547,76 @@ void drawDefaultClawdView() {
 }
 
 void drawProgressView() {
-  if (progressState == PROGRESS_OFFLINE) {
+  const DisplayState display = chooseDisplay();
+  if (display.state == PROGRESS_OFFLINE) {
     drawDefaultClawdView();
     return;
   }
 
-  if (progressSource == "claude") {
-    drawClaudeProgressView();
+  if (display.source == "claude") {
+    drawClaudeProgressView(display);
     return;
   }
-  drawCodexProgressView();
+  drawCodexProgressView(display);
 }
 
-bool setProgress(String state, String msg) {
+bool setProgressForSource(const String& source, String state, String msg) {
   state.trim();
   state.toUpperCase();
   if (!isProgressState(state)) return false;
-  progressState = state;
-  progressMsg = cleanAscii(msg, 24);
-  if (progressMsg.length() == 0) progressMsg = progressDefaultMessage(state);
+  String cleanMsg = cleanAscii(msg, 24);
+  if (cleanMsg.length() == 0) cleanMsg = progressDefaultMessage(state);
+  const unsigned long now = millis();
+  if (source == "claude") {
+    claudeState = state;
+    claudeMsg = cleanMsg;
+    claudeLastMs = now;
+  } else {
+    codexState = state;
+    codexMsg = cleanMsg;
+    codexLastMs = now;
+  }
   progressPulsePhase = 0;
-  lastProgressBlinkMs = millis();
-  if (state != PROGRESS_OFFLINE) lastCodexProgressMs = millis();
+  lastProgressBlinkMs = now;
   drawProgressView();
   return true;
 }
 
+bool setProgress(String state, String msg) {
+  return setProgressForSource(implicitProgressSource(), state, msg);
+}
+
 void progressTick() {
-  if (currentView != VIEW_PROGRESS || !isCodexLayerState(progressState)) return;
+  const DisplayState display = chooseDisplay();
+  if (currentView != VIEW_PROGRESS || !isCodexLayerState(display.state)) return;
   const uint32_t now = millis();
   if (now - lastProgressBlinkMs < 500) return;
   lastProgressBlinkMs = now;
-  if (progressState == PROGRESS_DONE) return;
+  if (display.state == PROGRESS_DONE) return;
   progressPulsePhase = (progressPulsePhase + 1) % 6;
-  const uint16_t col = progressColor(progressState);
-  if (progressSource == "claude") {
+  const uint16_t col = progressColor(display.state);
+  if (display.source == "claude") {
     drawClaudeCodeStyleLayer(col, progressPulsePhase);
   } else {
     drawCodexCore(col, progressPulsePhase);
-    if (progressState == PROGRESS_TEST) drawCodexScanLine(col, progressPulsePhase);
+    if (display.state == PROGRESS_TEST) drawCodexScanLine(col, progressPulsePhase);
   }
 }
 
 void checkCodexOfflineTimeout() {
-  if (!isCodexLayerState(progressState) || lastCodexProgressMs == 0) return;
-  if (millis() - lastCodexProgressMs >= CODEX_OFFLINE_TIMEOUT_MS) {
-    setProgress(PROGRESS_OFFLINE, "codex-timeout");
+  const unsigned long now = millis();
+  bool changed = false;
+  if (isCodexLayerState(codexState) && codexLastMs > 0 && now - codexLastMs >= CODEX_OFFLINE_TIMEOUT_MS) {
+    codexState = PROGRESS_OFFLINE;
+    codexMsg = "source-timeout";
+    changed = true;
   }
+  if (isCodexLayerState(claudeState) && claudeLastMs > 0 && now - claudeLastMs >= CODEX_OFFLINE_TIMEOUT_MS) {
+    claudeState = PROGRESS_OFFLINE;
+    claudeMsg = "source-timeout";
+    changed = true;
+  }
+  if (changed) drawProgressView();
 }
 
 // ═════════════════════════════════════════════════════════════
@@ -609,7 +680,7 @@ const char INDEX_HTML_LITE[] PROGMEM = R"rawhtml(
 <button class="btn" onclick="location.href='/ota'">OTA &#x5347;&#x7EA7;</button>
 <button class="btn" onclick="location.href='/network'">&#x7F51;&#x7EDC;&#x8BBE;&#x7F6E;</button>
 </div></main><div class="toast" id="toast"></div><script>
-let bl=true;const $=id=>document.getElementById(id),labels={OFFLINE:'Codex \u79bb\u7ebf',IDLE:'\u5f85\u673a\u4e2d',PLAN:'\u89c4\u5212\u4e2d',CODE:'\u7f16\u7801\u4e2d',TEST:'\u6d4b\u8bd5\u4e2d',DONE:'\u5df2\u5b8c\u6210',BLOCK:'\u88ab\u963b\u585e'},steps={OFFLINE:0,IDLE:0,PLAN:1,CODE:2,TEST:3,DONE:4,BLOCK:4};
+let bl=true;const $=id=>document.getElementById(id),labels={OFFLINE:'\u5df2\u79bb\u7ebf',IDLE:'\u5f85\u673a\u4e2d',PLAN:'\u89c4\u5212\u4e2d',CODE:'\u7f16\u7801\u4e2d',TEST:'\u6d4b\u8bd5\u4e2d',DONE:'\u5df2\u5b8c\u6210',BLOCK:'\u88ab\u963b\u585e'},steps={OFFLINE:0,IDLE:0,PLAN:1,CODE:2,TEST:3,DONE:4,BLOCK:4};
 function toast(t){$('toast').textContent=t;$('toast').classList.add('show');setTimeout(()=>$('toast').classList.remove('show'),1000)}
 async function req(path){const r=await fetch(path);if(!r.ok)throw new Error();return r}
 async function cmd(n){try{await req('/cmd?k='+n);toast('\u5df2\u66f4\u65b0')}catch(e){failed()}}
@@ -620,7 +691,7 @@ async function setAgentMode(m){try{await req('/agent-mode?mode='+encodeURICompon
 function paintAgentMode(m){$('modeAuto').classList.toggle('on',m==='AUTO');$('modeCodex').classList.toggle('on',m==='CODEX');$('modeClaude').classList.toggle('on',m==='CLAUDE')}
 function failed(){$('online').textContent='\u79bb\u7ebf';$('online').classList.add('off');toast('\u8fde\u63a5\u5931\u8d25')}
 function paintProgress(s){$('progress').textContent=s;$('progressText').textContent=labels[s]||s;const bar=$('bar');bar.className='bar '+(s==='DONE'?'done':s==='BLOCK'?'block':'');[...bar.children].forEach((x,i)=>x.classList.toggle('on',i<(steps[s]||0)))}
-async function refresh(){try{const j=await (await req('/state')).json();bl=j.bl!==false;paintBL();paintProgress(j.progress||'OFFLINE');$('source').textContent=j.progressSource||'none';paintAgentMode(j.agentMode||'AUTO');$('online').textContent='\u5728\u7ebf';$('online').classList.remove('off')}catch(e){failed()}}
+async function refresh(){try{const j=await (await req('/state')).json();bl=j.bl!==false;paintBL();const d=j.displaying==='claude'?j.claude:j.codex;paintProgress((d&&d.state)||j.progress||'OFFLINE');$('source').textContent=j.displaying||j.progressSource||'none';paintAgentMode(j.agentMode||'AUTO');$('online').textContent='\u5728\u7ebf';$('online').classList.remove('off')}catch(e){failed()}}
 refresh();setInterval(refresh,5000);
 </script></body></html>
 )rawhtml";
@@ -831,7 +902,7 @@ void routeBacklight() {
 void routeProgress() {
   const String state = server.hasArg("state") ? server.arg("state") : "";
   const String msg = server.hasArg("msg") ? server.arg("msg") : "";
-  String source = "";
+  String source = implicitProgressSource();
   if (server.hasArg("source")) {
     source = server.arg("source");
     source.trim();
@@ -840,16 +911,16 @@ void routeProgress() {
       server.send(400, "application/json", "{\"e\":1}");
       return;
     }
+    if (source == "none") source = implicitProgressSource();
   }
 
   String normalized = state;
   normalized.trim();
   normalized.toUpperCase();
-  if (!setProgress(normalized, msg)) {
+  if (!setProgressForSource(source, normalized, msg)) {
     server.send(400, "application/json", "{\"e\":1}");
     return;
   }
-  if (server.hasArg("source")) progressSource = source;
   if (normalized != PROGRESS_OFFLINE) markAction();
   server.send(200, "application/json", "{\"ok\":1}");
 }
@@ -881,13 +952,21 @@ String jsonEscape(String s) {
 }
 
 String stateJson() {
+  const DisplayState display = chooseDisplay();
   String j = "{\"view\":"; j += currentView;
   j += ",\"busy\":";   j += busy        ? "true" : "false";
   j += ",\"bl\":";     j += backlightOn ? "true" : "false";
-  j += ",\"progress\":\""; j += jsonEscape(progressState); j += "\"";
-  j += ",\"progressMsg\":\""; j += jsonEscape(progressMsg); j += "\"";
-  j += ",\"progressSource\":\""; j += jsonEscape(progressSource); j += "\"";
+  j += ",\"progress\":\""; j += jsonEscape(display.state); j += "\"";
+  j += ",\"progressMsg\":\""; j += jsonEscape(display.msg); j += "\"";
+  j += ",\"progressSource\":\""; j += jsonEscape(display.source); j += "\"";
+  j += ",\"codex\":{\"state\":\""; j += jsonEscape(codexState);
+  j += "\",\"msg\":\""; j += jsonEscape(codexMsg);
+  j += "\",\"lastMs\":"; j += codexLastMs; j += "}";
+  j += ",\"claude\":{\"state\":\""; j += jsonEscape(claudeState);
+  j += "\",\"msg\":\""; j += jsonEscape(claudeMsg);
+  j += "\",\"lastMs\":"; j += claudeLastMs; j += "}";
   j += ",\"agentMode\":\""; j += jsonEscape(agentMode); j += "\"";
+  j += ",\"displaying\":\""; j += jsonEscape(display.source); j += "\"";
   j += ",\"expr\":";   j += companionExpr;
   j += ",\"wifiMode\":\"AP_STA\"";
   j += ",\"wifiConnected\":"; j += WiFi.status() == WL_CONNECTED ? "true" : "false";
@@ -1039,8 +1118,10 @@ void setup() {
   server.begin();
 
   delay(1800);
-  progressState = PROGRESS_OFFLINE;
-  progressMsg = "codex-offline";
+  codexState = PROGRESS_OFFLINE;
+  codexMsg = progressDefaultMessage(PROGRESS_OFFLINE);
+  claudeState = PROGRESS_OFFLINE;
+  claudeMsg = progressDefaultMessage(PROGRESS_OFFLINE);
   drawDefaultClawdView();
 }
 
