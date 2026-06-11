@@ -64,6 +64,7 @@ uint16_t C_ORANGE, C_DARKBG, C_MUTED, C_GREEN;
 #define VIEW_EYES_NORMAL 0
 #define VIEW_PROGRESS    4
 #define VIEW_COMPANION   5
+#define VIEW_OTA         6
 
 #define EXPR_FOCUS       0
 #define EXPR_HAPPY       1
@@ -588,6 +589,7 @@ bool setProgress(String state, String msg) {
 
 void progressTick() {
   const DisplayState display = chooseDisplay();
+  if (currentView == VIEW_OTA) return;
   if (currentView != VIEW_PROGRESS || !isCodexLayerState(display.state)) return;
   const uint32_t now = millis();
   if (now - lastProgressBlinkMs < 500) return;
@@ -814,6 +816,7 @@ void routeWifiClear() {
 }
 
 void drawOtaStatus(const char* line1, const char* line2, uint16_t col) {
+  currentView = VIEW_OTA;
   busy = true;
   tft.fillScreen(C_DARKBG);
   tft.fillRect(0, 0, DISP_W, 6, col);
