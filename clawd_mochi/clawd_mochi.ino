@@ -62,9 +62,6 @@ uint16_t C_ORANGE, C_DARKBG, C_MUTED, C_GREEN;
 
 // ── State ─────────────────────────────────────────────────────
 #define VIEW_EYES_NORMAL 0
-#define VIEW_EYES_SQUISH 1
-#define VIEW_CODE        2
-#define VIEW_DRAW        3
 #define VIEW_PROGRESS    4
 #define VIEW_COMPANION   5
 
@@ -81,10 +78,8 @@ uint8_t  animSpeed    = 1;   // 1=slow(default) 2=normal 3=fast
 uint8_t  companionExpr = EXPR_FOCUS;
 uint32_t lastActionMs = 0;
 uint32_t lastProgressBlinkMs = 0;
-bool     progressBlinkOn = true;
 
 uint16_t animBgColor  = 0;   // background for eye/logo animations
-uint16_t drawBgColor  = 0;   // background for canvas
 const String PROGRESS_OFFLINE = "OFFLINE";
 const String PROGRESS_IDLE    = "IDLE";
 const String PROGRESS_PLAN    = "PLAN";
@@ -102,19 +97,6 @@ uint32_t lastCodexProgressMs = 0;
 
 const uint32_t CODEX_OFFLINE_TIMEOUT_MS = 120000UL;
 String   serialLine    = "";
-
-// ── Terminal ──────────────────────────────────────────────────
-#define TERM_COLS      15
-#define TERM_ROWS       8
-#define TERM_CHAR_W    12
-#define TERM_CHAR_H    20
-#define TERM_PAD_X      8
-#define TERM_PAD_Y     18
-
-bool    termMode    = false;
-String  termLines[TERM_ROWS];
-uint8_t termRow     = 0;
-uint8_t termCol     = 0;
 
 // ── Logo data ─────────────────────────────────────────────────
 #define LOGO_CX 120
@@ -233,13 +215,6 @@ int speedMs(int ms) {
   return ms;
 }
 
-uint16_t hexToRgb565(String hex) {
-  hex.replace("#", "");
-  if (hex.length() != 6) return C_WHITE;
-  long v = strtol(hex.c_str(), nullptr, 16);
-  return tft.color565((v >> 16) & 0xFF, (v >> 8) & 0xFF, v & 0xFF);
-}
-
 void setBacklight(bool on) {
   backlightOn = on;
   digitalWrite(TFT_BLK, on ? HIGH : LOW);
@@ -252,7 +227,6 @@ void initColours() {
   C_MUTED  = tft.color565(90,  88,  86);
   C_GREEN  = tft.color565(80, 220, 130);
   animBgColor = C_ORANGE;
-  drawBgColor = C_ORANGE;
 }
 
 // ═════════════════════════════════════════════════════════════
@@ -310,22 +284,6 @@ void drawChevron(int16_t cx, int16_t cy, int16_t arm, int16_t reach,
   }
 }
 
-void drawSquishEyes(bool closed = false) {
-  tft.fillScreen(animBgColor);
-  const int16_t lx = eyeLX(0), rx = eyeRX(0), cy = eyeCY();
-  const int16_t arm   = EYE_H / 2;
-  const int16_t reach = EYE_W / 2;
-  const int16_t lcx   = lx + EYE_W / 2;
-  const int16_t rcx   = rx + EYE_W / 2;
-  if (!closed) {
-    drawChevron(lcx, cy, arm, reach, 10, true,  C_BLACK);
-    drawChevron(rcx, cy, arm, reach, 10, false, C_BLACK);
-  } else {
-    tft.fillRect(lx, cy - 5, EYE_W, 10, C_BLACK);
-    tft.fillRect(rx, cy - 5, EYE_W, 10, C_BLACK);
-  }
-}
-
 void drawCompanionEyes(uint8_t expr, int16_t ox = 0) {
   tft.fillScreen(animBgColor);
   const int16_t lx = eyeLX(ox), rx = eyeRX(ox), ey = eyeY();
@@ -367,22 +325,9 @@ bool setCompanionExpr(String name) {
   if (name == "focus") companionExpr = EXPR_FOCUS;
   else if (name == "happy") companionExpr = EXPR_HAPPY;
   else return false;
-  termMode = false;
   currentView = VIEW_COMPANION;
   drawCompanionEyes(companionExpr);
   return true;
-}
-
-void drawCodeView() {
-  termMode = false;
-  tft.fillScreen(C_DARKBG);
-  tft.fillRect(0, 0,          DISP_W, 4, C_ORANGE);
-  tft.fillRect(0, DISP_H - 4, DISP_W, 4, C_ORANGE);
-  tft.setTextColor(C_ORANGE); tft.setTextSize(4);
-  tft.setCursor((DISP_W - 144) / 2, DISP_H / 2 - 52); tft.print("Claude");
-  tft.setTextColor(C_WHITE);  tft.setTextSize(4);
-  tft.setCursor((DISP_W - 96) / 2,  DISP_H / 2 + 8);  tft.print("Code");
-  tft.fillRect((DISP_W - 96) / 2, DISP_H / 2 + 52, 96, 3, C_ORANGE);
 }
 
 uint16_t progressColor(const String& state) {
@@ -403,10 +348,6 @@ bool isCodexLayerState(const String& state) {
 
 bool isProgressState(const String& state) {
   return state == PROGRESS_OFFLINE || isCodexLayerState(state);
-}
-
-bool isProgressSource(const String& source) {
-  return source == "codex" || source == "claude" || source == "none";
 }
 
 bool setAgentMode(String mode) {
@@ -553,13 +494,11 @@ void drawClaudeProgressView() {
 }
 
 void drawDefaultClawdView() {
-  termMode = false;
   currentView = VIEW_EYES_NORMAL;
   drawNormalEyes();
 }
 
 void drawProgressView() {
-  termMode = false;
   if (progressState == PROGRESS_OFFLINE) {
     drawDefaultClawdView();
     return;
@@ -572,10 +511,6 @@ void drawProgressView() {
   drawCodexProgressView();
 }
 
-void drawCodexIdleView() {
-  drawProgressView();
-}
-
 bool setProgress(String state, String msg) {
   state.trim();
   state.toUpperCase();
@@ -583,7 +518,6 @@ bool setProgress(String state, String msg) {
   progressState = state;
   progressMsg = cleanAscii(msg, 24);
   if (progressMsg.length() == 0) progressMsg = progressDefaultMessage(state);
-  progressBlinkOn = true;
   progressPulsePhase = 0;
   lastProgressBlinkMs = millis();
   if (state != PROGRESS_OFFLINE) lastCodexProgressMs = millis();
@@ -597,7 +531,6 @@ void progressTick() {
   if (now - lastProgressBlinkMs < 500) return;
   lastProgressBlinkMs = now;
   if (progressState == PROGRESS_DONE) return;
-  progressBlinkOn = !progressBlinkOn;
   progressPulsePhase = (progressPulsePhase + 1) % 6;
   const uint16_t col = progressColor(progressState);
   if (progressSource == "claude") {
@@ -616,113 +549,6 @@ void checkCodexOfflineTimeout() {
 }
 
 // ═════════════════════════════════════════════════════════════
-//  TERMINAL
-// ═════════════════════════════════════════════════════════════
-
-void termClear() {
-  for (uint8_t i = 0; i < TERM_ROWS; i++) termLines[i] = "";
-  termRow = 0; termCol = 0;
-}
-
-void termDrawHeader() {
-  tft.fillRect(0, 0, DISP_W, TERM_PAD_Y + 1, C_DARKBG);
-  tft.setTextColor(C_ORANGE); tft.setTextSize(1);
-  tft.setCursor(TERM_PAD_X, 4); tft.print("clawd@mochi terminal");
-  tft.drawFastHLine(0, TERM_PAD_Y, DISP_W, C_ORANGE);
-}
-
-// Prefix "clawd:~$ " in green, drawn only when the row has content
-void termDrawPrefix(int16_t yy) {
-  tft.setTextColor(C_GREEN); tft.setTextSize(1);
-  tft.setCursor(TERM_PAD_X, yy + 6);
-  tft.print("clawd:~$ ");
-}
-
-#define PREFIX_PX 54   // 9 chars × 6px = 54px at textSize 1
-
-void termDrawLine(uint8_t r) {
-  const int16_t yy = TERM_PAD_Y + 4 + r * TERM_CHAR_H;
-  tft.fillRect(0, yy, DISP_W, TERM_CHAR_H, C_DARKBG);
-  // show prefix only on the currently active (cursor) line
-  if (r == termRow) termDrawPrefix(yy);
-  tft.setTextColor(C_WHITE); tft.setTextSize(2);
-  tft.setCursor(TERM_PAD_X + PREFIX_PX, yy + 1);
-  tft.print(termLines[r]);
-  if (r == termRow) {
-    const int16_t cx = TERM_PAD_X + PREFIX_PX + termCol * TERM_CHAR_W;
-    tft.fillRect(cx, yy + 1, TERM_CHAR_W - 2, TERM_CHAR_H - 2, C_GREEN);
-  }
-}
-
-void termDrawLastChar() {
-  if (termCol == 0) return;
-  const int16_t yy    = TERM_PAD_Y + 4 + termRow * TERM_CHAR_H;
-  const int16_t baseX = TERM_PAD_X + PREFIX_PX;
-  const uint8_t prev  = termCol - 1;
-  // erase prev cell (had cursor block)
-  tft.fillRect(baseX + prev * TERM_CHAR_W, yy + 1, TERM_CHAR_W, TERM_CHAR_H - 1, C_DARKBG);
-  tft.setTextColor(C_WHITE); tft.setTextSize(2);
-  tft.setCursor(baseX + prev * TERM_CHAR_W, yy + 1);
-  tft.print(termLines[termRow][prev]);
-  // new cursor
-  tft.fillRect(baseX + termCol * TERM_CHAR_W, yy + 1, TERM_CHAR_W - 2, TERM_CHAR_H - 2, C_GREEN);
-}
-
-void termDrawBackspace() {
-  const int16_t yy    = TERM_PAD_Y + 4 + termRow * TERM_CHAR_H;
-  const int16_t baseX = TERM_PAD_X + PREFIX_PX;
-  // erase deleted char + old cursor
-  tft.fillRect(baseX + termCol * TERM_CHAR_W, yy + 1, TERM_CHAR_W * 2, TERM_CHAR_H - 1, C_DARKBG);
-  // new cursor
-  tft.fillRect(baseX + termCol * TERM_CHAR_W, yy + 1, TERM_CHAR_W - 2, TERM_CHAR_H - 2, C_GREEN);
-  // if line now empty, erase the prefix too
-  if (termLines[termRow].length() == 0) {
-    tft.fillRect(0, yy, TERM_PAD_X + PREFIX_PX, TERM_CHAR_H, C_DARKBG);
-  }
-}
-
-void termFullRedraw() {
-  tft.fillScreen(C_DARKBG);
-  termDrawHeader();
-  for (uint8_t r = 0; r < TERM_ROWS; r++) termDrawLine(r);
-}
-
-void termScroll() {
-  for (uint8_t i = 0; i < TERM_ROWS - 1; i++) termLines[i] = termLines[i + 1];
-  termLines[TERM_ROWS - 1] = "";
-  termRow = TERM_ROWS - 1;
-  termFullRedraw();
-}
-
-void termAddChar(char c) {
-  if (c == '\n' || c == '\r') {
-    const int16_t yy = TERM_PAD_Y + 4 + termRow * TERM_CHAR_H;
-    // erase cursor on current row
-    tft.fillRect(TERM_PAD_X + PREFIX_PX + termCol * TERM_CHAR_W,
-                 yy + 1, TERM_CHAR_W, TERM_CHAR_H - 1, C_DARKBG);
-    termRow++; termCol = 0;
-    if (termRow >= TERM_ROWS) { termScroll(); return; }
-    termDrawLine(termRow);  // draws prefix on new line
-  } else if (c == '\b' || c == 127) {
-    if (termCol > 0) {
-      termCol--;
-      termLines[termRow].remove(termLines[termRow].length() - 1);
-      termDrawBackspace();
-    }
-  } else if (c >= 32 && c < 127) {
-    if (termCol >= TERM_COLS) {
-      termRow++; termCol = 0;
-      if (termRow >= TERM_ROWS) { termScroll(); return; }
-    }
-    // draw prefix on first char of this line
-    if (termCol == 0) termDrawPrefix(TERM_PAD_Y + 4 + termRow * TERM_CHAR_H);
-    termLines[termRow] += c;
-    termCol++;
-    termDrawLastChar();
-  }
-}
-
-// ═════════════════════════════════════════════════════════════
 //  ANIMATIONS
 // ═════════════════════════════════════════════════════════════
 
@@ -734,16 +560,6 @@ void animNormalEyes() {
   drawNormalEyes(0, false); delay(speedMs(70));
   drawNormalEyes(0, true);  delay(speedMs(70));
   drawNormalEyes(0, false);
-  busy = false;
-}
-
-void animSquishEyes() {
-  busy = true;
-  for (uint8_t i = 0; i < 3; i++) {
-    drawSquishEyes(false); delay(speedMs(160));
-    drawSquishEyes(true);  delay(speedMs(100));
-  }
-  drawSquishEyes(false);
   busy = false;
 }
 
@@ -928,7 +744,6 @@ void routeWifiClear() {
 
 void drawOtaStatus(const char* line1, const char* line2, uint16_t col) {
   busy = true;
-  termMode = false;
   tft.fillScreen(C_DARKBG);
   tft.fillRect(0, 0, DISP_W, 6, col);
   tft.setTextColor(col); tft.setTextSize(3);
@@ -985,7 +800,6 @@ void markAction() {
 
 void showNormal() {
   markAction();
-  termMode = false;
   currentView = VIEW_EYES_NORMAL;
   animNormalEyes();
 }
@@ -1058,16 +872,6 @@ void routeExpr() {
     return;
   }
   server.send(200, "application/json", "{\"ok\":1}");
-}
-
-// Convert RGB565 back to #RRGGBB for state endpoint
-String rgb565ToHex(uint16_t c) {
-  uint8_t r = ((c >> 11) & 0x1F) << 3;
-  uint8_t g = ((c >> 5)  & 0x3F) << 2;
-  uint8_t b = (c & 0x1F) << 3;
-  char buf[8];
-  snprintf(buf, sizeof(buf), "#%02x%02x%02x", r, g, b);
-  return String(buf);
 }
 
 String jsonEscape(String s) {
