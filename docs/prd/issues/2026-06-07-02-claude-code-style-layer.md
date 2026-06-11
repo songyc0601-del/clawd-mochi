@@ -20,7 +20,7 @@ Reference PRD: `docs/prd/2026-06-07-agent-display-mode.zh-CN.md`
 - [ ] `DONE` is visually stable.
 - [ ] `BLOCK` uses red emphasis.
 - [ ] Existing Codex Core-Pulse behavior remains unchanged for Codex states.
-- [ ] Firmware source and distributed firmware mirror remain identical.
+- [ ] Firmware source is maintained only in `clawd_mochi/clawd_mochi.ino`; the historical distributed firmware mirror has been removed.
 - [ ] Static contract tests cover the source-based display branch.
 
 ## Blocked by

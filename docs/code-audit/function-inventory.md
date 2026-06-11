@@ -1,6 +1,6 @@
 # clawd_mochi.ino 函数清单
 
-文件：`clawd_mochi/clawd_mochi.ino`（共 1992 行，含一份同文件副本在 `dist/clawd_mochi/clawd_mochi.ino`）。
+文件：`clawd_mochi/clawd_mochi.ino`（共 1992 行）。该文件是唯一主 sketch；`dist/clawd_mochi/clawd_mochi.ino` 副本已删除，不再维护 dist 镜像同步。
 
 下表按声明顺序列出全部 86 个函数（含 4 个 `inline` 工具、`setup` 与 `loop`）。"调用方"基于全文件 grep 引用统计；HTTP 路由处理函数额外标注是否在 `setup()`（L1961–1974）的 `server.on(...)` 中注册。
 
