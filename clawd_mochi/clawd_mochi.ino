@@ -340,6 +340,9 @@ bool setCompanionExpr(String name) {
   name.toLowerCase();
   if (name == "focus") companionExpr = EXPR_FOCUS;
   else if (name == "happy") companionExpr = EXPR_HAPPY;
+  else if (name == "sleepy") companionExpr = EXPR_SLEEPY;
+  else if (name == "stare") companionExpr = EXPR_STARE;
+  else if (name == "break") companionExpr = EXPR_BREAK;
   else return false;
   currentView = VIEW_COMPANION;
   drawCompanionEyes(companionExpr);
@@ -676,6 +679,9 @@ const char INDEX_HTML_LITE[] PROGMEM = R"rawhtml(
 <button class="btn" onclick="cmd('normal')">&#x6B63;&#x5E38;</button>
 <button class="btn" onclick="expr('focus')">&#x4E13;&#x6CE8;</button>
 <button class="btn" onclick="expr('happy')">&#x5F00;&#x5FC3;</button>
+<button class="btn" onclick="expr('sleepy')">&#x56F0;&#x5026;</button>
+<button class="btn" onclick="expr('stare')">&#x51DD;&#x89C6;</button>
+<button class="btn" onclick="expr('break')">&#x4F11;&#x606F;</button>
 </div>
 <div class="sec">&#x8BBE;&#x5907;</div><div class="device">
 <button class="btn on" id="blBtn" onclick="toggleBL()"><span class="toggle" id="bl">&#x5F00;&#x542F;</span>&#x5C4F;&#x5E55;&#x80CC;&#x5149;</button>
