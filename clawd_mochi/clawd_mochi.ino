@@ -1010,6 +1010,29 @@ String handleSerialCommand(String line) {
     return "ERR bad-value";
   }
 
+  if (upper.startsWith("EXPR ")) {
+    markAction();
+    String name = line.substring(5);
+    if (setCompanionExpr(name)) return "OK";
+
+    name.trim();
+    name.toLowerCase();
+    if (name == "stare") {
+      companionExpr = EXPR_STARE;
+      currentView = VIEW_COMPANION;
+      drawCompanionEyes(companionExpr);
+      return "OK";
+    }
+    return "ERR: unknown expr";
+  }
+
+  if (upper.startsWith("MODE ")) {
+    markAction();
+    const String mode = line.substring(5);
+    if (setAgentMode(mode)) return "OK";
+    return "ERR: unknown mode";
+  }
+
   if (upper.startsWith("PROGRESS ")) {
     const int firstSpace = line.indexOf(' ', 9);
     String state = firstSpace < 0 ? line.substring(9) : line.substring(9, firstSpace);
